@@ -1,5 +1,4 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() {
@@ -8,43 +7,54 @@ service cloud.firestore {
 
     function isSuperAdmin() {
       return isSignedIn() && (
-        request.auth.token.email == "linh.persie.10@gmail.com" ||
-        request.auth.token.isSuperadmin == true ||
-        request.auth.token.kpi_isSuperadmin == true
+        request.auth.token.email == 'linh.persie.10@gmail.com' ||
+        request.auth.token.rev_isSuperadmin == true ||
+        request.auth.token.superadmin == true ||
+        request.auth.token.fnb == 1
       );
     }
 
-    // Default Deny
-    match /{document=**} {
-      allow read, write: if false;
+    function getUserData() {
+      return get(/databases/$(database)/documents/FNB_SURVEY_users/$(request.auth.uid)).data;
     }
 
-    // Hồ sơ Đáp viên / Phỏng vấn viên (PVV)
+    function isAdminOrSuper() {
+      return isSuperAdmin() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/FNB_SURVEY_users/$(request.auth.uid)) &&
+        (getUserData().role == 'superadmin' || getUserData().role == 'admin' || getUserData().isSuperadmin == true)
+      );
+    }
+
+    // Hồ sơ người dùng & phân quyền (Superadmin / Admin / Đáp viên)
     match /FNB_SURVEY_users/{userId} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
+      allow create: if isSignedIn() && (request.auth.uid == userId || isAdminOrSuper());
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdminOrSuper());
       allow delete: if isSuperAdmin();
 
-      // Mã PIN đã băm (PBKDF2-SHA256 + Salt) của riêng từng PVV
+      // Kho lưu trữ mã PIN 6 số đã băm (PBKDF2-SHA256)
       match /private/{docId} {
-        allow read, write: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
+        allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdminOrSuper());
       }
     }
 
-    // Phiếu khảo sát F&B Sun World Ba Na Hills
-    match /FNB_SURVEY_responses/{responseId} {
-      // Tất cả PVV đã đăng nhập đều đọc được để cập nhật bảng Quota realtime (n = 600)
+    // Danh sách phân quyền trước theo email (Pre-assigned roles)
+    match /FNB_SURVEY_role_invites/{emailId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.interviewerUid == request.auth.uid;
-      allow update: if isSignedIn() && (
-        resource.data.interviewerUid == request.auth.uid || isSuperAdmin()
-      );
-      allow delete: if isSuperAdmin();
+      allow write: if isAdminOrSuper();
     }
 
-    // Nhật ký bảo mật & xác thực PIN
+    // Dữ liệu phiếu khảo sát F&B Sun World Ba Na Hills
+    match /FNB_SURVEY_responses/{responseId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isAdminOrSuper();
+    }
+
+    // Nhật ký kiểm toán
     match /FNB_SURVEY_audit_logs/{logId} {
-      allow read: if isSuperAdmin();
+      allow read: if isAdminOrSuper();
       allow create: if isSignedIn();
       allow update, delete: if false;
     }

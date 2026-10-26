@@ -1,19 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  ShieldCheck,
-  Lock,
-  Delete,
-  LogOut,
-  MapPin,
-  Gift,
-  UserCheck,
-  KeyRound,
-  AlertTriangle,
-  Sparkles,
-  CheckCircle2,
-  Smartphone,
-} from 'lucide-react';
-import { SURVEY_LOCATIONS } from '../data/surveySchema';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { AnimatePresence, motion, type Variants } from 'motion/react';
+import { Check, Delete, Lock, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react';
 import { InterviewerProfile } from '../services/surveyStorage';
 import {
   PinSecretRecord,
@@ -23,9 +10,20 @@ import {
   recordFailedPinAttemptLocal,
   resetLocalPinAttempts,
 } from '../utils/pinCrypto';
+import { VaultShell } from './vault/VaultShell';
+import { PaymentHero } from './vault/PaymentHero';
+import { PinCells, type PinPhase } from './vault/PinCells';
+import { EASE_OUT, SPRING_POP } from './vault/motionTokens';
+import { BrandMark } from './BrandMark';
 
 interface AuthVaultProps {
-  authUser: { uid: string; email: string; displayName: string; photoURL?: string | null; isDemo?: boolean } | null;
+  authUser: {
+    uid: string;
+    email: string;
+    displayName: string;
+    photoURL?: string | null;
+    isDemo?: boolean;
+  } | null;
   profile: InterviewerProfile | null;
   pinRecord: PinSecretRecord | null;
   isSigningIn: boolean;
@@ -37,7 +35,31 @@ interface AuthVaultProps {
   onLogout: () => Promise<void>;
 }
 
-type PinStep = 'profile_setup' | 'create_pin' | 'confirm_pin' | 'enter_pin';
+const PIN_LENGTH = 6;
+const MIN_VERIFY_MS = 750;
+const SUCCESS_HOLD_MS = 1150;
+const LEAVE_MS = 300;
+type Step = 'enter' | 'create' | 'confirm';
+
+const COPY: Record<Step, { title: string; desc: string }> = {
+  enter: { title: 'Mở khóa PKT Survey', desc: 'Nhập mã PIN 6 số của bạn' },
+  create: { title: 'Thiết lập mã PIN', desc: 'Tạo mã PIN 6 số cho lần đầu đăng nhập' },
+  confirm: { title: 'Xác nhận mã PIN', desc: 'Nhập lại mã PIN vừa tạo' },
+};
+
+const stagger: Variants = { show: { transition: { staggerChildren: 0.07, delayChildren: 0.2 } } };
+const rise: Variants = {
+  hidden: { opacity: 0, y: 14, scale: 0.98 },
+  show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.45, ease: EASE_OUT } },
+};
+const swap = {
+  initial: { opacity: 0, y: 8, filter: 'blur(4px)' },
+  animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+  exit: { opacity: 0, y: -8, filter: 'blur(4px)' },
+  transition: { duration: 0.24, ease: EASE_OUT },
+};
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const AuthVault: React.FC<AuthVaultProps> = ({
   authUser,
@@ -46,626 +68,557 @@ export const AuthVault: React.FC<AuthVaultProps> = ({
   isSigningIn,
   authError,
   onGoogleLogin,
-  onDemoLogin,
   onPinVerified,
   onResetPinViaGoogle,
   onLogout,
 }) => {
-  const [step, setStep] = useState<PinStep>('enter_pin');
-  const [pinValue, setPinValue] = useState('');
-  const [firstPin, setFirstPin] = useState('');
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [shake, setShake] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [unlockedSuccess, setUnlockedSuccess] = useState(false);
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+  const hasConfiguredPin = Boolean(pinRecord && pinRecord.pinHash);
 
-  // Shift profile fields (used during initial setup or quick change)
-  const [pvvName, setPvvName] = useState('');
-  const [pvvCode, setPvvCode] = useState('');
-  const [locationId, setLocationId] = useState<number>(1);
-  const [giftName, setGiftName] = useState('Voucher ẩm thực / Quà lưu niệm Ba Na Hills');
-  const [demoNameInput, setDemoNameInput] = useState('');
-  const [showDemoModal, setShowDemoModal] = useState(false);
+  const [step, setStep] = useState<Step>(hasConfiguredPin ? 'enter' : 'create');
+  const [value, setValue] = useState('');
+  const [firstPin, setFirstPin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [shake, setShake] = useState(false);
+  const [phase, setPhase] = useState<PinPhase>('typing');
+  const [leaving, setLeaving] = useState(false);
+  const [loadingReset, setLoadingReset] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const errorTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const toggleTheme = () => {
+    const next = !isDark;
+    setIsDark(next);
+    document.documentElement.classList.toggle('dark', next);
+  };
 
   useEffect(() => {
-    if (profile) {
-      setPvvName(profile.displayName || authUser?.displayName || 'PVV Bà Nà');
-      setPvvCode(profile.interviewerCode || `PVV-${(authUser?.uid || '001').slice(0, 4).toUpperCase()}`);
-      setLocationId(profile.defaultLocationId || 1);
-      setGiftName(profile.defaultGiftName || 'Voucher ẩm thực / Quà lưu niệm Ba Na Hills');
+    if (phase === 'success') return;
+    if (hasConfiguredPin && step !== 'enter' && !firstPin) setStep('enter');
+    if (!hasConfiguredPin && step === 'enter') setStep('create');
+  }, [hasConfiguredPin, phase, step, firstPin]);
+
+  const focusInput = () => inputRef.current?.focus({ preventScroll: true });
+  useEffect(() => {
+    if (authUser) focusInput();
+  }, [step, authUser]);
+  useEffect(() => () => clearTimeout(errorTimer.current), []);
+
+  const locked = loadingReset || phase === 'verifying' || phase === 'success';
+
+  const fail = useCallback((message: string, backToCreate = false) => {
+    setError(message);
+    setPhase('error');
+    setShake(true);
+    navigator.vibrate?.(60);
+    setTimeout(() => setShake(false), 500);
+    clearTimeout(errorTimer.current);
+    errorTimer.current = setTimeout(() => setPhase((p) => (p === 'error' ? 'typing' : p)), 700);
+    setValue('');
+    if (backToCreate) {
+      setFirstPin('');
+      setStep('create');
     }
-  }, [profile, authUser]);
+    focusInput();
+  }, []);
+
+  const succeed = useCallback(
+    async (updatedProfile: InterviewerProfile, newPin?: PinSecretRecord) => {
+      setError(null);
+      setPhase('success');
+      await wait(SUCCESS_HOLD_MS);
+      setLeaving(true);
+      await wait(LEAVE_MS);
+      await onPinVerified(updatedProfile, newPin);
+    },
+    [onPinVerified]
+  );
+
+  const submit = useCallback(
+    async (pin: string) => {
+      if (locked || !authUser) return;
+
+      const attemptState = getLocalPinAttempts(authUser.uid);
+      if (attemptState.lockedUntil && Date.now() < attemptState.lockedUntil) {
+        const mins = Math.ceil((attemptState.lockedUntil - Date.now()) / 60000);
+        fail(`Nhập sai quá 5 lần. Tạm khóa ${mins} phút.`);
+        return;
+      }
+
+      if (step === 'create') {
+        setFirstPin(pin);
+        setValue('');
+        setError(null);
+        setStep('confirm');
+        return;
+      }
+
+      if (step === 'confirm' && pin !== firstPin) {
+        fail('Mã PIN xác nhận không khớp. Hãy tạo lại từ đầu.', true);
+        return;
+      }
+
+      setPhase('verifying');
+      const t0 = Date.now();
+      let ok = false;
+      let message =
+        step === 'enter'
+          ? 'Mã PIN không chính xác. Vui lòng thử lại.'
+          : 'Đã xảy ra lỗi khi tạo PIN. Vui lòng thử lại.';
+      let createdRecord: PinSecretRecord | undefined;
+
+      const finalProfile: InterviewerProfile = profile || {
+        uid: authUser.uid,
+        email: authUser.email,
+        displayName: authUser.displayName || 'PVV Bà Nà',
+        role: 'interviewer',
+        status: 'approved',
+        interviewerCode: `PVV-${authUser.uid.slice(0, 4).toUpperCase()}`,
+        defaultLocationId: 1,
+        defaultGiftName: 'Voucher ẩm thực / Quà lưu niệm Ba Na Hills',
+        hasPin: true,
+        updatedAt: new Date().toISOString(),
+        isDemoMode: Boolean(authUser.isDemo),
+      };
+
+      try {
+        if (step === 'enter' && pinRecord) {
+          ok = await verifyPinAgainstRecord(pin, authUser.uid, pinRecord);
+          if (!ok) {
+            const nextState = recordFailedPinAttemptLocal(authUser.uid);
+            const left = Math.max(0, 5 - nextState.failedCount);
+            message =
+              left > 0
+                ? `Mã PIN không chính xác (còn ${left} lần thử).`
+                : 'Đã khóa tạm thời 15 phút do nhập sai 5 lần.';
+          } else {
+            resetLocalPinAttempts(authUser.uid);
+          }
+        } else {
+          createdRecord = await createPinSecret(pin, authUser.uid);
+          ok = true;
+        }
+      } catch {
+        message = 'Đã xảy ra lỗi khi xác minh PIN.';
+      }
+
+      const rest = MIN_VERIFY_MS - (Date.now() - t0);
+      if (rest > 0) await wait(rest);
+
+      if (ok) {
+        await succeed({ ...finalProfile, hasPin: true }, createdRecord);
+      } else {
+        fail(message, step === 'confirm');
+      }
+    },
+    [locked, authUser, step, firstPin, profile, pinRecord, fail, succeed]
+  );
+
+  useEffect(() => {
+    if (value.length === PIN_LENGTH && phase === 'typing') {
+      const pin = value;
+      const t = setTimeout(() => void submit(pin), 140);
+      return () => clearTimeout(t);
+    }
+  }, [value, phase, submit]);
+
+  const type = (next: (v: string) => string) => {
+    setError(null);
+    setPhase((p) => (p === 'error' ? 'typing' : p));
+    setValue((v) => next(v).replace(/\D/g, '').slice(0, PIN_LENGTH));
+  };
+  const push = (digit: string) => {
+    if (!locked) type((v) => v + digit);
+  };
+  const pop = () => {
+    if (!locked) setValue((v) => v.slice(0, -1));
+  };
 
   useEffect(() => {
     if (!authUser) return;
-    if (pinRecord && pinRecord.pinHash) {
-      setStep('enter_pin');
-    } else {
-      setStep('profile_setup');
-    }
-    setPinValue('');
-    setFirstPin('');
-    setErrorMsg(null);
-  }, [authUser, pinRecord]);
-
-  const triggerError = useCallback((msg: string, resetToCreate = false) => {
-    setErrorMsg(msg);
-    setShake(true);
-    navigator.vibrate?.(80);
-    setTimeout(() => setShake(false), 500);
-    setPinValue('');
-    if (resetToCreate) {
-      setFirstPin('');
-      setStep('create_pin');
-    }
-  }, []);
-
-  const handleCompletePin = useCallback(
-    async (enteredPin: string) => {
-      if (!authUser || verifying) return;
-
-      if (step === 'create_pin') {
-        setFirstPin(enteredPin);
-        setPinValue('');
-        setErrorMsg(null);
-        setStep('confirm_pin');
-        return;
-      }
-
-      if (step === 'confirm_pin') {
-        if (enteredPin !== firstPin) {
-          triggerError('Mã PIN xác nhận không khớp. Vui lòng nhập lại từ đầu.', true);
-          return;
-        }
-        setVerifying(true);
-        try {
-          const newSecret = await createPinSecret(enteredPin, authUser.uid);
-          const updatedProfile: InterviewerProfile = {
-            uid: authUser.uid,
-            email: authUser.email,
-            displayName: pvvName.trim() || authUser.displayName || 'PVV Bà Nà',
-            interviewerCode: pvvCode.trim() || 'PVV-01',
-            defaultLocationId: locationId,
-            defaultGiftName: giftName.trim() || 'Quà lưu niệm Ba Na Hills',
-            hasPin: true,
-            updatedAt: new Date().toISOString(),
-            isDemoMode: authUser.isDemo,
-          };
-          setUnlockedSuccess(true);
-          setTimeout(async () => {
-            await onPinVerified(updatedProfile, newSecret);
-          }, 550);
-        } catch (e: any) {
-          triggerError(e?.message || 'Không thể lưu mã PIN. Vui lòng thử lại.');
-          setVerifying(false);
-        }
-        return;
-      }
-
-      if (step === 'enter_pin') {
-        const attemptState = getLocalPinAttempts(authUser.uid);
-        if (attemptState.lockedUntil && Date.now() < attemptState.lockedUntil) {
-          const mins = Math.ceil((attemptState.lockedUntil - Date.now()) / 60000);
-          triggerError(`Mã PIN đang tạm khóa do nhập sai 5 lần. Thử lại sau ${mins} phút hoặc bấm "Quên PIN?".`);
-          return;
-        }
-
-        if (!pinRecord) {
-          setStep('profile_setup');
-          return;
-        }
-
-        setVerifying(true);
-        try {
-          const isValid = await verifyPinAgainstRecord(enteredPin, authUser.uid, pinRecord);
-          if (!isValid) {
-            const nextState = recordFailedPinAttemptLocal(authUser.uid);
-            const remaining = Math.max(0, 5 - nextState.failedCount);
-            setVerifying(false);
-            triggerError(
-              remaining > 0
-                ? `Mã PIN không chính xác (Còn ${remaining} lần thử).`
-                : 'Đã nhập sai 5 lần. Mã PIN bị khóa 15 phút.'
-            );
-            return;
-          }
-
-          resetLocalPinAttempts(authUser.uid);
-          const updatedProfile: InterviewerProfile = {
-            uid: authUser.uid,
-            email: authUser.email,
-            displayName: pvvName.trim() || profile?.displayName || authUser.displayName,
-            interviewerCode: pvvCode.trim() || profile?.interviewerCode || 'PVV-01',
-            defaultLocationId: locationId,
-            defaultGiftName: giftName.trim() || profile?.defaultGiftName || 'Quà lưu niệm Ba Na Hills',
-            hasPin: true,
-            updatedAt: new Date().toISOString(),
-            isDemoMode: authUser.isDemo,
-          };
-          setUnlockedSuccess(true);
-          setTimeout(async () => {
-            await onPinVerified(updatedProfile);
-          }, 500);
-        } catch {
-          setVerifying(false);
-          triggerError('Lỗi xác thực mã PIN.');
-        }
-      }
-    },
-    [
-      authUser,
-      verifying,
-      step,
-      firstPin,
-      pvvName,
-      pvvCode,
-      locationId,
-      giftName,
-      pinRecord,
-      profile,
-      onPinVerified,
-      triggerError,
-    ]
-  );
-
-  // Trigger when 6 digits are entered
-  useEffect(() => {
-    if (pinValue.length === 6 && !verifying && step !== 'profile_setup') {
-      const timer = setTimeout(() => {
-        void handleCompletePin(pinValue);
-      }, 120);
-      return () => clearTimeout(timer);
-    }
-  }, [pinValue, verifying, step, handleCompletePin]);
-
-  // Physical keyboard support (desktop / iPad Magic Keyboard)
-  useEffect(() => {
-    if (!authUser || step === 'profile_setup') return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (verifying || unlockedSuccess) return;
-      const target = e.target as HTMLElement | null;
-      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
-
+      if (locked || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      const editable =
+        t &&
+        t !== inputRef.current &&
+        (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName));
+      if (editable) return;
       if (/^[0-9]$/.test(e.key)) {
         e.preventDefault();
-        setErrorMsg(null);
-        setPinValue((prev) => (prev.length < 6 ? prev + e.key : prev));
+        if (e.repeat) return;
+        type((v) => v + e.key);
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault();
-        setPinValue((prev) => prev.slice(0, -1));
+        setValue((v) => v.slice(0, -1));
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [authUser, step, verifying, unlockedSuccess]);
+  }, [authUser, locked]);
 
-  const pressDigit = (d: string) => {
-    if (verifying || unlockedSuccess) return;
-    setErrorMsg(null);
-    navigator.vibrate?.(15);
-    setPinValue((prev) => (prev.length < 6 ? prev + d : prev));
+  const handleResetPin = async () => {
+    if (!window.confirm('Đặt lại mã PIN? Bạn sẽ tạo mã PIN 6 số mới cho tài khoản này.')) return;
+    setLoadingReset(true);
+    setError(null);
+    try {
+      await onResetPinViaGoogle();
+      setValue('');
+      setFirstPin('');
+      setStep('create');
+    } finally {
+      setLoadingReset(false);
+    }
   };
 
-  const pressBackspace = () => {
-    if (verifying || unlockedSuccess) return;
-    navigator.vibrate?.(15);
-    setPinValue((prev) => prev.slice(0, -1));
-  };
-
-  // ============================================================================
-  // VIEW 1: GOOGLE SSO LOGIN SCREEN
-  // ============================================================================
+  // ==================== MÀN 1: ĐĂNG NHẬP GOOGLE SSO (CHUẨN PKT PAYMENT) ====================
   if (!authUser) {
     return (
-      <div className="min-h-dvh w-full bg-[#07110C] text-emerald-50 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-        {/* Ambient Emerald Glow */}
-        <div
-          className="fixed inset-0 pointer-events-none"
-          style={{
-            background:
-              'radial-gradient(900px 500px at 80% 0%, rgba(26, 173, 105, 0.22), transparent 65%), radial-gradient(800px 500px at 15% 100%, rgba(62, 203, 135, 0.14), transparent 65%), linear-gradient(145deg, #0D2016 0%, #07110C 60%, #050A07 100%)',
-          }}
-        />
+      <VaultShell
+        maxWidth={420}
+        topRight={
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="vs-ghost-btn"
+            aria-label="Đổi giao diện Sáng/Tối"
+          >
+            {isDark ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+        }
+        footer={
+          <>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <ShieldCheck size={14} /> Bảo mật cấp doanh nghiệp
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Lock size={14} /> Dữ liệu nội bộ PKT
+            </span>
+          </>
+        }
+      >
+        <style>{`
+          .lg-google {
+            position: relative; isolation: isolate; overflow: hidden;
+            margin-top: 26px; width: 100%; min-height: 56px; padding: 6px;
+            display: grid; grid-template-columns: 44px minmax(0, 1fr) 28px; align-items: center;
+            border-radius: 9999px; border: 1px solid color-mix(in srgb, var(--brand) 65%, transparent);
+            background: linear-gradient(110deg, var(--brand) 0%, var(--brand-solid) 35%, var(--brand-solid) 65%, var(--brand) 100%);
+            background-size: 220% 100%;
+            color: #ffffff; font-size: 15px; font-weight: 600; font-family: var(--font-ui);
+            cursor: pointer; transition: transform .25s cubic-bezier(.2,.9,.3,1.3), box-shadow .3s, filter .2s;
+            box-shadow: 0 0 24px -2px color-mix(in srgb, var(--brand) 68%, transparent), 0 16px 34px -14px color-mix(in srgb, var(--brand) 75%, transparent), inset 0 1px 0 rgba(255,255,255,0.55);
+            animation: lg-flow 6s ease-in-out 1.2s infinite, lg-halo 3.2s ease-in-out 1.2s infinite;
+          }
+          .lg-google::after {
+            content: ''; position: absolute; inset: -2px auto -2px -40%; width: 34%; z-index: -1;
+            background: linear-gradient(100deg, transparent 0%, rgba(255,255,255,0) 20%, rgba(255,255,255,0.65) 50%, rgba(255,255,255,0) 80%, transparent 100%);
+            transform: skewX(-18deg); animation: lg-sheen 3.6s ease-in-out 1.4s infinite;
+          }
+          .lg-google:hover { transform: translateY(-2px) scale(1.015); filter: brightness(1.06); }
+          .lg-google:active { transform: translateY(0) scale(.97); }
+          .lg-google:disabled { cursor: default; animation: none; transform: none; }
+          .lg-state { display: contents; }
+          .lg-gicon {
+            width: 44px; height: 44px; background: #fff; border-radius: 9999px;
+            display: inline-flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 6px rgba(26,36,64,0.18), inset 0 0 0 1px rgba(26,36,64,0.06);
+            transition: transform .5s cubic-bezier(.2,.9,.3,1.4);
+          }
+          .lg-google:hover .lg-gicon { transform: rotate(360deg) scale(1.08); }
+          .lg-google-label { white-space: nowrap; font-size: 15px; text-align: center; }
+          .lg-google-arrow { justify-self: center; opacity: 0; transform: translateX(-8px); transition: opacity .3s, transform .3s; font-size: 18px; }
+          .lg-google:hover .lg-google-arrow { opacity: 1; transform: translateX(0); }
+          .lg-brand { margin-bottom: 12px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+          .lg-error {
+            margin-top: 16px; padding: 11px 14px; border-radius: 14px; text-align: left;
+            font-size: 12.5px; line-height: 1.45; color: var(--danger);
+            background: color-mix(in srgb, var(--danger) 8%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
+          }
+          .lg-hint { margin-top: 16px; font-size: 12px; color: var(--fg-muted); }
+          .lg-spin { width: 20px; height: 20px; border-radius: 9999px; border: 2.5px solid rgba(26,36,64,0.25); border-top-color: #1a2440; animation: lg-rotate .8s linear infinite; }
+          @keyframes lg-flow { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+          @keyframes lg-sheen { 0% { left: -40%; } 55%, 100% { left: 120%; } }
+          @keyframes lg-halo {
+            0%, 100% { box-shadow: 0 0 24px -2px color-mix(in srgb, var(--brand) 62%, transparent), inset 0 1px 0 rgba(255,255,255,0.55); }
+            50% { box-shadow: 0 0 32px 2px color-mix(in srgb, var(--brand) 82%, transparent), 0 0 0 6px color-mix(in srgb, var(--brand) 18%, transparent), inset 0 1px 0 rgba(255,255,255,0.55); }
+          }
+          @keyframes lg-rotate { to { transform: rotate(360deg); } }
+        `}</style>
 
-        {/* Top Brand Pill */}
-        <div className="relative z-10 flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-white/8 border border-emerald-400/30 backdrop-blur-md mb-5 shadow-lg">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_#34d399]" />
-          <span className="text-xs font-bold tracking-[0.18em] uppercase text-emerald-200">
-            SUN WORLD BA NA HILLS · BANAFI-KPI
-          </span>
-        </div>
+        <PaymentHero />
+        <motion.div variants={stagger} initial="hidden" animate="show">
+          <motion.div variants={rise} className="lg-brand">
+            <BrandMark size="md" />
+          </motion.div>
 
-        {/* Main Glass Card */}
-        <div className="relative z-10 w-full max-w-md rounded-3xl bg-[#0D1E15]/90 border border-emerald-500/40 p-7 sm:p-8 shadow-[0_25px_70px_-15px_rgba(0,0,0,0.85),0_0_40px_-10px_rgba(26,173,105,0.3)] backdrop-blur-2xl animate-fade-up">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-700 flex items-center justify-center mx-auto mb-5 shadow-[0_0_28px_rgba(26,173,105,0.55)]">
-            <ShieldCheck className="w-9 h-9 text-white" />
-          </div>
+          <motion.div variants={rise}>
+            <h1 className="vs-title">Khảo sát F&amp;B Bà Nà Hills</h1>
+            <p className="vs-desc">Hệ thống phỏng vấn &amp; quản trị dữ liệu nội bộ</p>
+          </motion.div>
 
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-center text-white tracking-tight">
-            Khảo Sát F&B Bà Nà Hills
-          </h1>
-          <p className="text-sm text-emerald-200/75 text-center mt-2 leading-relaxed">
-            Hệ thống phỏng vấn CAPI trên Điện thoại &amp; iPad dành cho Phỏng vấn viên (PVV). Lưu trữ thời gian thực trên{' '}
-            <span className="text-emerald-300 font-semibold">banafi-kpi (pkt-survey)</span>.
-          </p>
-
-          {/* Feature Checklist */}
-          <div className="mt-6 space-y-3 bg-black/25 rounded-2xl p-4 border border-emerald-500/20">
-            <div className="flex items-start gap-3">
-              <UserCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-              <div className="text-xs text-emerald-100/90 leading-relaxed">
-                <strong className="text-white block">Bước 1: Đăng nhập Google SSO</strong>
-                Định danh tự động từng Phỏng vấn viên (PVV) qua tài khoản Google.
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <KeyRound className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-              <div className="text-xs text-emerald-100/90 leading-relaxed">
-                <strong className="text-white block">Bước 2: Thiết lập &amp; Mở khóa bằng Mã PIN 6 số</strong>
-                Mở khóa siêu tốc trên iPad/Mobile giữa các lượt phỏng vấn, hỗ trợ cả khi mất sóng.
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <Smartphone className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-              <div className="text-xs text-emerald-100/90 leading-relaxed">
-                <strong className="text-white block">Tối ưu 5 Điểm khảo sát &amp; Quota n = 600</strong>
-                Cổng thành · Nhà thờ 1 &amp; 2 · Ga 12 · Vòng xuyến.
-              </div>
-            </div>
-          </div>
+          <motion.div variants={rise}>
+            <button
+              className={`lg-google${isSigningIn ? ' busy' : ''}`}
+              onClick={() => void onGoogleLogin()}
+              disabled={isSigningIn}
+              type="button"
+            >
+              {isSigningIn ? (
+                <span className="lg-state">
+                  <span className="lg-gicon">
+                    <span className="lg-spin" />
+                  </span>
+                  <span className="lg-google-label">Đang xác thực…</span>
+                  <span />
+                </span>
+              ) : (
+                <span className="lg-state">
+                  <span className="lg-gicon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        fill="#4285F4"
+                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                      />
+                    </svg>
+                  </span>
+                  <span className="lg-google-label">Đăng nhập bằng Google</span>
+                  <span className="lg-google-arrow" aria-hidden="true">
+                    →
+                  </span>
+                </span>
+              )}
+            </button>
+          </motion.div>
 
           {authError && (
-            <div className="mt-4 p-3.5 rounded-xl bg-red-500/15 border border-red-400/40 text-red-200 text-xs flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-              <span>{authError}</span>
+            <div className="lg-error" role="alert">
+              {authError}
             </div>
           )}
 
-          {/* Google SSO Primary Button */}
-          <button
-            type="button"
-            onClick={() => void onGoogleLogin()}
-            disabled={isSigningIn}
-            className="mt-6 w-full py-3.5 px-5 rounded-full bg-white text-slate-900 font-bold text-sm flex items-center justify-center gap-3 shadow-[0_10px_25px_rgba(0,0,0,0.4)] hover:bg-emerald-50 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60"
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-              <path
-                fill="#4285F4"
-                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z"
-              />
-              <path
-                fill="#EA4335"
-                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-              />
-            </svg>
-            <span>{isSigningIn ? 'Đang kết nối Google SSO...' : 'Đăng nhập bằng Google SSO'}</span>
-          </button>
-
-          {/* Training / Demo Mode for Quick Field Practice */}
-          <div className="mt-4 pt-4 border-t border-white/10 text-center">
-            {!showDemoModal ? (
-              <button
-                type="button"
-                onClick={() => setShowDemoModal(true)}
-                className="text-xs text-emerald-300/80 hover:text-emerald-200 underline underline-offset-4 cursor-pointer"
-              >
-                Chế độ Tập huấn PVV / Thử nghiệm nhanh (Không cần Popup Google)
-              </button>
-            ) : (
-              <div className="bg-black/35 p-3.5 rounded-2xl border border-emerald-500/30 text-left space-y-2.5 animate-fade-up">
-                <label className="block text-xs font-semibold text-emerald-200">
-                  Nhập Họ tên PVV để vào thiết lập Mã PIN 6 số:
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={demoNameInput}
-                    onChange={(e) => setDemoNameInput(e.target.value)}
-                    placeholder="VD: Nguyễn Văn A (PVV Điểm 1)"
-                    className="flex-1 px-3 py-2 rounded-xl bg-white/10 border border-white/20 text-white text-xs placeholder:text-white/40 focus:outline-none focus:border-emerald-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => onDemoLogin(demoNameInput.trim() || 'PVV Tập Huấn')}
-                    className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs cursor-pointer shrink-0"
-                  >
-                    Tiếp tục
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <p className="relative z-10 mt-6 text-[11px] tracking-widest uppercase text-emerald-200/40 text-center">
-          PKT CORE SECURITY · THE VAULT PIN · SUN GROUP BNC
-        </p>
-      </div>
+          <motion.p variants={rise} className="lg-hint">
+            Bằng việc đăng nhập, bạn đồng ý với quy định bảo mật nội bộ của PKT.
+          </motion.p>
+        </motion.div>
+      </VaultShell>
     );
   }
 
-  // ============================================================================
-  // VIEW 2: FIRST-TIME SHIFT SETUP + PIN CREATION OR PIN UNLOCK ("THE VAULT")
-  // ============================================================================
+  // ==================== MÀN 2: MÃ PIN 6 SỐ (CHUẨN PKT PAYMENT) ====================
+  const name = authUser.displayName || '';
+  const { title, desc } =
+    phase === 'success'
+      ? step === 'enter'
+        ? { title: 'Đã mở khóa', desc: name ? `Chào mừng trở lại, ${name}` : 'Chào mừng trở lại' }
+        : { title: 'Đã thiết lập mã PIN', desc: 'Không gian làm việc đã sẵn sàng' }
+      : COPY[step];
+
+  const keypad = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+
+  let statusNode: React.ReactNode = null;
+  if (error) statusNode = <span className="pv-error">{error}</span>;
+  else if (phase === 'verifying')
+    statusNode = (
+      <span className="pv-status">
+        <i className="pv-spin" />
+        {step === 'enter' ? 'Đang xác minh mã PIN…' : 'Đang lưu mã PIN…'}
+      </span>
+    );
+  else if (phase === 'success')
+    statusNode = (
+      <span className="pv-status ok">
+        <Check size={14} strokeWidth={3} />
+        Đã xác thực &amp; bảo mật
+      </span>
+    );
+  else if (loadingReset)
+    statusNode = (
+      <span className="pv-status">
+        <i className="pv-spin" />
+        Đang đặt lại…
+      </span>
+    );
+
+  const cardClass = [shake && 'shake', leaving && 'leaving'].filter(Boolean).join(' ');
+
   return (
-    <div className="min-h-dvh w-full bg-[#07110C] text-emerald-50 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      <div
-        className="fixed inset-0 pointer-events-none"
-        style={{
-          background:
-            'radial-gradient(900px 500px at 80% 0%, rgba(26, 173, 105, 0.22), transparent 65%), radial-gradient(800px 500px at 15% 100%, rgba(62, 203, 135, 0.14), transparent 65%), linear-gradient(145deg, #0D2016 0%, #07110C 60%, #050A07 100%)',
-        }}
-      />
-
-      {/* Top Bar with Account Info & Logout */}
-      <div className="relative z-10 w-full max-w-md flex items-center justify-between mb-4 px-1">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300 font-bold text-sm shrink-0">
-            {(authUser.displayName || authUser.email || 'P')[0].toUpperCase()}
-          </div>
-          <div className="truncate">
-            <div className="text-xs font-bold text-white truncate">{authUser.displayName}</div>
-            <div className="text-[11px] text-emerald-300/70 truncate">{authUser.email}</div>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => void onLogout()}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/8 hover:bg-white/15 border border-white/15 text-xs text-emerald-100 cursor-pointer shrink-0"
-        >
-          <LogOut className="w-3.5 h-3.5" />
-          <span>Đổi TK</span>
-        </button>
-      </div>
-
-      {/* Main Vault Card */}
-      <div
-        className={`relative z-10 w-full max-w-md rounded-3xl bg-[#0D1E15]/95 border border-emerald-500/45 p-6 sm:p-7 shadow-[0_25px_70px_-15px_rgba(0,0,0,0.85),0_0_40px_-10px_rgba(26,173,105,0.32)] backdrop-blur-2xl ${
-          shake ? 'animate-shake' : 'animate-fade-up'
-        }`}
-      >
-        {step === 'profile_setup' ? (
-          <div>
-            <div className="flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest text-emerald-400 mb-2">
-              <Sparkles className="w-4 h-4" />
-              <span>Thiết lập Ca Khảo Sát &amp; Mã PIN</span>
-            </div>
-            <h2 className="text-xl font-extrabold text-white text-center">
-              Thông Tin Phỏng Vấn Viên
-            </h2>
-            <p className="text-xs text-emerald-200/70 text-center mt-1 mb-5">
-              Xác nhận thông tin mặc định trước khi đặt mã PIN 6 số cho thiết bị này.
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-emerald-200 mb-1">
-                  Họ và tên Phỏng vấn viên (Tên PVV ghi trên phiếu) *
-                </label>
-                <input
-                  type="text"
-                  value={pvvName}
-                  onChange={(e) => setPvvName(e.target.value)}
-                  placeholder="Nhập họ tên PVV..."
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black/35 border border-emerald-500/35 text-white text-sm focus:outline-none focus:border-emerald-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-emerald-200 mb-1 flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Điểm khảo sát hiện tại (Có thể đổi trên màn hình chính) *</span>
-                </label>
-                <select
-                  value={locationId}
-                  onChange={(e) => setLocationId(Number(e.target.value))}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#09150F] border border-emerald-500/35 text-white text-sm focus:outline-none focus:border-emerald-400"
-                >
-                  {SURVEY_LOCATIONS.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      {loc.name} (Chỉ tiêu: ~{loc.quotaTarget} mẫu)
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-emerald-200 mb-1 flex items-center gap-1.5">
-                  <Gift className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Tên/Giá trị quà tặng du khách (Hiển thị ở Lời giới thiệu)</span>
-                </label>
-                <input
-                  type="text"
-                  value={giftName}
-                  onChange={(e) => setGiftName(e.target.value)}
-                  placeholder="VD: Voucher ẩm thực 50.000đ / Móc khóa Bà Nà"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black/35 border border-emerald-500/35 text-white text-sm focus:outline-none focus:border-emerald-400"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (!pvvName.trim()) {
-                    setErrorMsg('Vui lòng nhập Họ và tên Phỏng vấn viên.');
-                    return;
-                  }
-                  setErrorMsg(null);
-                  setStep('create_pin');
-                }}
-                className="w-full py-3.5 rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 font-extrabold text-sm shadow-[0_0_25px_rgba(26,173,105,0.45)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer mt-2"
-              >
-                Tiếp tục: Đặt Mã PIN 6 Số →
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="text-center">
-            {/* Vault Lock Badge */}
-            <div
-              className={`w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center transition-all ${
-                unlockedSuccess
-                  ? 'bg-emerald-400 text-slate-950 shadow-[0_0_30px_#34d399]'
-                  : 'bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 shadow-[0_0_24px_rgba(26,173,105,0.35)]'
-              }`}
+    <div
+      style={{ display: 'contents' }}
+      onMouseDown={(e) => {
+        if (!(e.target as HTMLElement).closest('button')) focusInput();
+      }}
+    >
+      <VaultShell
+        maxWidth={400}
+        cardClassName={cardClass}
+        topRight={
+          <>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="vs-ghost-btn"
+              aria-label="Đổi giao diện Sáng/Tối"
             >
-              {unlockedSuccess ? <CheckCircle2 className="w-8 h-8" /> : <Lock className="w-6 h-6" />}
-            </div>
+              {isDark ? <Sun size={15} /> : <Moon size={15} />}
+            </button>
+            <button
+              className="vs-ghost-btn"
+              onClick={() => void onLogout()}
+              type="button"
+              disabled={phase === 'success'}
+            >
+              <LogOut size={15} />
+              Đăng xuất
+            </button>
+          </>
+        }
+      >
+        <style>{`
+          .pv-logo { display: flex; justify-content: center; margin: 0 auto 18px; transition: filter .5s; }
+          .pv-logo.ok { filter: drop-shadow(0 0 14px color-mix(in srgb, var(--success) 55%, transparent)); }
+          .pv-head { min-height: 58px; }
+          .pv-title { font-family: var(--font-ui); font-size: 22px; font-weight: 600; color: var(--fg); letter-spacing: -0.01em; margin: 0; }
+          .pv-title .hl { color: var(--success); }
+          .pv-desc { margin-top: 6px; font-size: 13.5px; color: var(--fg-muted); }
+          .pv-status-line { min-height: 22px; margin-top: 10px; display: flex; justify-content: center; font-size: 12.5px; }
+          .pv-error { color: var(--danger); }
+          .pv-status { display: inline-flex; align-items: center; gap: 8px; color: color-mix(in srgb, var(--brand) 55%, var(--fg)); }
+          .pv-status.ok { color: var(--success); font-weight: 600; }
+          .pv-spin { width: 13px; height: 13px; border-radius: 9999px; border: 2px solid color-mix(in srgb, var(--brand) 28%, transparent); border-top-color: var(--brand); animation: pv-rotate .8s linear infinite; display: inline-block; }
+          .pv-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; justify-items: center; transition: opacity .3s, filter .3s; }
+          .pv-pad.dim { opacity: .35; filter: saturate(.6); }
+          .pv-key {
+            width: 64px; height: 64px; border-radius: 9999px; border: 1px solid color-mix(in srgb, var(--brand) 20%, transparent);
+            background: var(--surface-2); color: var(--fg); font-size: 22px; font-weight: 500;
+            font-family: var(--font-ui); cursor: pointer; font-variant-numeric: tabular-nums;
+            transition: background .15s, transform .12s cubic-bezier(.2,.9,.3,1.4), border-color .15s, box-shadow .2s;
+            display: flex; align-items: center; justify-content: center;
+            -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+          }
+          .pv-key:hover { background: color-mix(in srgb, var(--brand) 18%, transparent); border-color: color-mix(in srgb, var(--brand) 55%, transparent); box-shadow: 0 0 16px color-mix(in srgb, var(--brand) 25%, transparent); }
+          .pv-key:active { transform: scale(.9); background: color-mix(in srgb, var(--brand) 32%, transparent); border-color: color-mix(in srgb, var(--brand) 85%, transparent); transition-duration: .05s; }
+          .pv-key:disabled { cursor: default; }
+          .pv-key.ghost { border: none; background: transparent; font-size: 12px; font-weight: 600; color: var(--fg-muted); box-shadow: none; }
+          .pv-key.ghost:hover { color: var(--brand); background: transparent; }
+          .pv-steps { display: flex; justify-content: center; gap: 8px; margin-top: 20px; }
+          .pv-pip { width: 26px; height: 4px; border-radius: 9999px; background: color-mix(in srgb, var(--fg) 16%, transparent); transition: background .3s; }
+          .pv-pip.on { background: var(--brand); box-shadow: 0 0 10px color-mix(in srgb, var(--brand) 65%, transparent); }
+          .pv-hidden-input { position: absolute; opacity: 0; pointer-events: none; font-size: 16px; width: 1px; height: 1px; }
+          @keyframes pv-rotate { to { transform: rotate(360deg); } }
+          @media (max-height: 720px) { .pv-key { width: 56px; height: 56px; } .vs-card { padding: 30px 26px 24px !important; } }
+        `}</style>
 
-            <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-400 mb-1">
-              BANAFI · THE VAULT PIN
-            </div>
+        <div className={`pv-logo${phase === 'success' ? ' ok' : ''}`}>
+          <BrandMark size="md" />
+        </div>
 
-            <h2 className="text-xl font-extrabold text-white">
-              {unlockedSuccess
-                ? 'Đã Mở Khóa Phiên Khảo Sát!'
-                : step === 'create_pin'
-                ? 'Tạo Mã PIN Bảo Mật (6 Số)'
-                : step === 'confirm_pin'
-                ? 'Xác Nhận Lại Mã PIN (6 Số)'
-                : `Xin chào, ${pvvName.split(' ').slice(-1)[0] || 'PVV'} 👋`}
-            </h2>
+        <div className="pv-head">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div key={title} {...swap}>
+              <h1 className="pv-title">
+                {phase === 'success' ? (
+                  <>
+                    {title.split(' ').slice(0, -1).join(' ')}{' '}
+                    <span className="hl">{title.split(' ').slice(-1)}</span>
+                  </>
+                ) : (
+                  title
+                )}
+              </h1>
+              <p className="pv-desc">{desc}</p>
+            </motion.div>
+          </AnimatePresence>
+        </div>
 
-            <p className="text-xs text-emerald-200/75 mt-1">
-              {unlockedSuccess
-                ? 'Đang mở giao diện phỏng vấn du khách...'
-                : step === 'create_pin'
-                ? 'Đặt mã PIN 6 chữ số để mở khóa nhanh trên Điện thoại / iPad'
-                : step === 'confirm_pin'
-                ? 'Nhập lại chính xác 6 chữ số bạn vừa tạo'
-                : 'Nhập mã PIN 6 số của bạn để tiếp tục ghi phiếu khảo sát'}
-            </p>
+        <input
+          ref={inputRef}
+          className="pv-hidden-input"
+          type="password"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          value={value}
+          onChange={(e) => {
+            if (locked) return;
+            type(() => e.target.value.replace(/\D/g, ''));
+          }}
+          disabled={locked}
+          aria-label="Mã PIN"
+        />
 
-            {/* Quick Shift Location selector right on PIN unlock screen */}
-            {step === 'enter_pin' && (
-              <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/35 border border-emerald-500/30 text-xs">
-                <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <select
-                  value={locationId}
-                  onChange={(e) => setLocationId(Number(e.target.value))}
-                  className="bg-transparent text-emerald-100 font-semibold focus:outline-none cursor-pointer"
-                >
-                  {SURVEY_LOCATIONS.map((loc) => (
-                    <option key={loc.id} value={loc.id} className="bg-slate-900 text-white">
-                      {loc.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={step}
+            initial={{ opacity: 0, x: 48 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -48 }}
+            transition={{ duration: 0.26, ease: EASE_OUT }}
+          >
+            <PinCells length={PIN_LENGTH} filled={value.length} phase={phase} onClick={focusInput} />
+          </motion.div>
+        </AnimatePresence>
 
-            {/* 6 Glass PIN Cells */}
-            <div className="flex justify-center gap-2.5 my-5">
-              {Array.from({ length: 6 }).map((_, idx) => {
-                const isFilled = idx < pinValue.length;
-                const isActive = idx === pinValue.length && !verifying && !unlockedSuccess;
-                return (
-                  <div
-                    key={idx}
-                    className={`w-11 h-13 rounded-2xl flex items-center justify-center border transition-all duration-150 ${
-                      unlockedSuccess
-                        ? 'border-emerald-400 bg-emerald-400/25 scale-105'
-                        : isActive
-                        ? 'border-emerald-400 bg-white/10 scale-105 shadow-[0_0_16px_rgba(52,211,153,0.45)]'
-                        : isFilled
-                        ? 'border-emerald-500/60 bg-emerald-500/20'
-                        : 'border-white/15 bg-white/5'
-                    }`}
-                  >
-                    {isFilled ? (
-                      <span className="w-3 h-3 rounded-full bg-emerald-300 shadow-[0_0_10px_#6ee7b7]" />
-                    ) : isActive ? (
-                      <span className="w-0.5 h-5 bg-emerald-400 animate-pulse" />
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
+        <div className="pv-status-line" role="status" aria-live="polite">
+          {statusNode}
+        </div>
 
-            {/* Status / Error Line */}
-            <div className="min-h-[22px] text-xs mb-3 flex items-center justify-center">
-              {errorMsg ? (
-                <span className="text-red-300 font-medium">{errorMsg}</span>
-              ) : verifying ? (
-                <span className="text-emerald-300 animate-pulse">Đang xác minh bảo mật PBKDF2...</span>
-              ) : (
-                <span className="text-emerald-200/50">
-                  Hỗ trợ bấm trên màn hình cảm ứng hoặc bàn phím cứng
-                </span>
-              )}
-            </div>
+        <div className={`pv-pad${locked ? ' dim' : ''}`}>
+          {keypad.map((d) => (
+            <button
+              key={d}
+              className="pv-key"
+              type="button"
+              disabled={locked}
+              onClick={() => push(d)}
+            >
+              {d}
+            </button>
+          ))}
+          {step === 'enter' ? (
+            <button
+              className="pv-key ghost"
+              type="button"
+              disabled={locked}
+              onClick={() => void handleResetPin()}
+            >
+              Quên PIN?
+            </button>
+          ) : (
+            <span />
+          )}
+          <button className="pv-key" type="button" disabled={locked} onClick={() => push('0')}>
+            0
+          </button>
+          <button
+            className="pv-key ghost"
+            type="button"
+            disabled={locked}
+            onClick={pop}
+            aria-label="Xóa"
+          >
+            <Delete size={20} />
+          </button>
+        </div>
 
-            {/* Touch Numeric Keypad (Optimized for Phone & iPad) */}
-            <div className="grid grid-cols-3 gap-3 max-w-[270px] mx-auto">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
-                <button
-                  key={digit}
-                  type="button"
-                  disabled={verifying || unlockedSuccess}
-                  onClick={() => pressDigit(digit)}
-                  className="h-14 rounded-2xl border border-emerald-500/25 bg-white/6 hover:bg-emerald-500/20 active:scale-90 active:bg-emerald-500/35 text-xl font-bold text-white transition-all flex items-center justify-center cursor-pointer select-none"
-                >
-                  {digit}
-                </button>
-              ))}
-
-              {step === 'enter_pin' ? (
-                <button
-                  type="button"
-                  disabled={verifying || unlockedSuccess}
-                  onClick={() => {
-                    void onResetPinViaGoogle();
-                    setStep('profile_setup');
-                  }}
-                  className="h-14 rounded-2xl text-[11px] font-semibold text-emerald-300/80 hover:text-emerald-200 flex items-center justify-center cursor-pointer px-1"
-                >
-                  Quên PIN?
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={verifying || unlockedSuccess}
-                  onClick={() => {
-                    setPinValue('');
-                    setFirstPin('');
-                    setStep('profile_setup');
-                  }}
-                  className="h-14 rounded-2xl text-[11px] font-semibold text-emerald-300/80 hover:text-emerald-200 flex items-center justify-center cursor-pointer px-1"
-                >
-                  ← Sửa hồ sơ
-                </button>
-              )}
-
-              <button
-                type="button"
-                disabled={verifying || unlockedSuccess}
-                onClick={() => pressDigit('0')}
-                className="h-14 rounded-2xl border border-emerald-500/25 bg-white/6 hover:bg-emerald-500/20 active:scale-90 active:bg-emerald-500/35 text-xl font-bold text-white transition-all flex items-center justify-center cursor-pointer select-none"
-              >
-                0
-              </button>
-
-              <button
-                type="button"
-                disabled={verifying || unlockedSuccess || pinValue.length === 0}
-                onClick={pressBackspace}
-                aria-label="Xóa số"
-                className="h-14 rounded-2xl text-emerald-200 hover:bg-white/10 active:scale-90 flex items-center justify-center cursor-pointer disabled:opacity-30"
-              >
-                <Delete className="w-6 h-6" />
-              </button>
-            </div>
+        {step !== 'enter' && (
+          <div className="pv-steps" aria-hidden>
+            <span className="pv-pip on" />
+            <span className={`pv-pip${step === 'confirm' ? ' on' : ''}`} />
           </div>
         )}
-      </div>
+      </VaultShell>
     </div>
   );
 };
