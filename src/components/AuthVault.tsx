@@ -42,7 +42,7 @@ const LEAVE_MS = 300;
 type Step = 'enter' | 'create' | 'confirm';
 
 const COPY: Record<Step, { title: string; desc: string }> = {
-  enter: { title: 'Mở khóa PKT Survey', desc: 'Nhập mã PIN 6 số của bạn' },
+  enter: { title: 'Mở khóa F&B Survey', desc: 'Nhập mã PIN 6 số của bạn' },
   create: { title: 'Thiết lập mã PIN', desc: 'Tạo mã PIN 6 số cho lần đầu đăng nhập' },
   confirm: { title: 'Xác nhận mã PIN', desc: 'Nhập lại mã PIN vừa tạo' },
 };
@@ -292,7 +292,7 @@ export const AuthVault: React.FC<AuthVaultProps> = ({
               <ShieldCheck size={14} /> Bảo mật cấp doanh nghiệp
             </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <Lock size={14} /> Dữ liệu nội bộ PKT
+              <Lock size={14} /> Dữ liệu nội bộ Ban Ẩm Thực
             </span>
           </>
         }
@@ -410,7 +410,7 @@ export const AuthVault: React.FC<AuthVaultProps> = ({
           )}
 
           <motion.p variants={rise} className="lg-hint">
-            Bằng việc đăng nhập, bạn đồng ý với quy định bảo mật nội bộ của PKT.
+            Bằng việc đăng nhập, bạn đồng ý với quy định bảo mật của Ban Ẩm Thực.
           </motion.p>
         </motion.div>
       </VaultShell>
