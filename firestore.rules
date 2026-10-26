@@ -1,0 +1,52 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "linh.persie.10@gmail.com" ||
+        request.auth.token.isSuperadmin == true ||
+        request.auth.token.kpi_isSuperadmin == true
+      );
+    }
+
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hồ sơ Đáp viên / Phỏng vấn viên (PVV)
+    match /FNB_SURVEY_users/{userId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
+      allow delete: if isSuperAdmin();
+
+      // Mã PIN đã băm (PBKDF2-SHA256 + Salt) của riêng từng PVV
+      match /private/{docId} {
+        allow read, write: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
+      }
+    }
+
+    // Phiếu khảo sát F&B Sun World Ba Na Hills
+    match /FNB_SURVEY_responses/{responseId} {
+      // Tất cả PVV đã đăng nhập đều đọc được để cập nhật bảng Quota realtime (n = 600)
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.interviewerUid == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.interviewerUid == request.auth.uid || isSuperAdmin()
+      );
+      allow delete: if isSuperAdmin();
+    }
+
+    // Nhật ký bảo mật & xác thực PIN
+    match /FNB_SURVEY_audit_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
+  }
+}

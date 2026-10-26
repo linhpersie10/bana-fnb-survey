@@ -1,0 +1,8 @@
+{
+  "firestore": [
+    {
+      "database": "pkt-survey",
+      "rules": "firestore.rules"
+    }
+  ]
+}
