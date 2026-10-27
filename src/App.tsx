@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -30,6 +30,8 @@ import {
 import {
   InterviewerProfile,
   UserRole,
+  getLocalInterviewerProfile,
+  saveLocalInterviewerProfile,
   fetchInterviewerProfileAndPin,
   saveInterviewerProfileAndPinToCloud,
   submitSurveyResponse,
@@ -45,6 +47,8 @@ import {
 } from './services/surveyStorage';
 import {
   PinSecretRecord,
+  getLocalPinSecret,
+  saveLocalPinSecret,
   isPinSessionVerified,
   markPinSessionVerified,
   lockPinSession,
@@ -83,15 +87,47 @@ const ROLE_BADGE: Record<UserRole, { label: string; cls: string }> = {
   },
 };
 
+const SAVED_AUTH_USER_KEY = 'banafi_fnb_persisted_auth_user_v1';
+
+function getSavedAuthUser(): AuthUserState | null {
+  try {
+    const raw = localStorage.getItem(SAVED_AUTH_USER_KEY);
+    return raw ? (JSON.parse(raw) as AuthUserState) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveAuthUserToStorage(user: AuthUserState | null): void {
+  try {
+    if (user) {
+      localStorage.setItem(SAVED_AUTH_USER_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(SAVED_AUTH_USER_KEY);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export const App: React.FC = () => {
-  const [authUser, setAuthUser] = useState<AuthUserState | null>(null);
-  const [authInitializing, setAuthInitializing] = useState(true);
+  const [authUser, setAuthUser] = useState<AuthUserState | null>(() => getSavedAuthUser());
+  const [authInitializing, setAuthInitializing] = useState<boolean>(() => !getSavedAuthUser());
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const [profile, setProfile] = useState<InterviewerProfile | null>(null);
-  const [pinRecord, setPinRecord] = useState<PinSecretRecord | null>(null);
-  const [pinUnlocked, setPinUnlocked] = useState(false);
+  const [profile, setProfile] = useState<InterviewerProfile | null>(() => {
+    const saved = getSavedAuthUser();
+    return saved ? getLocalInterviewerProfile(saved.uid) : null;
+  });
+  const [pinRecord, setPinRecord] = useState<PinSecretRecord | null>(() => {
+    const saved = getSavedAuthUser();
+    return saved ? getLocalPinSecret(saved.uid) : null;
+  });
+  const [pinUnlocked, setPinUnlocked] = useState<boolean>(() => {
+    const saved = getSavedAuthUser();
+    return saved ? isPinSessionVerified(saved.uid) : false;
+  });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('survey');
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -109,8 +145,6 @@ export const App: React.FC = () => {
   const [formData, setFormData] = useState<SurveyResponseData>(() =>
     createEmptySurveyResponse('INIT', 'PVV Bà Nà', '', 1, 'Voucher ẩm thực', 1)
   );
-
-  const lastActivityRef = useRef<number>(Date.now());
 
   useEffect(() => {
     const handleOnline = () => {
@@ -153,7 +187,18 @@ export const App: React.FC = () => {
           photoURL: fbUser.photoURL,
           isDemo: false,
         };
+        saveAuthUserToStorage(userObj);
         setAuthUser(userObj);
+
+        // Khôi phục tức thì từ bộ nhớ đệm trên thiết bị để không phải chờ mạng khi F5 tải lại trang
+        const cachedProfile = getLocalInterviewerProfile(userObj.uid);
+        const cachedPin = getLocalPinSecret(userObj.uid);
+        const alreadyVerified = isPinSessionVerified(userObj.uid);
+        if (cachedProfile) setProfile(cachedProfile);
+        if (cachedPin) setPinRecord(cachedPin);
+        if (alreadyVerified) setPinUnlocked(true);
+        setAuthInitializing(false);
+
         const { profile: p, pinRecord: pin } = await fetchInterviewerProfileAndPin(
           userObj.uid,
           userObj.email,
@@ -164,12 +209,23 @@ export const App: React.FC = () => {
         );
         setProfile(p);
         setPinRecord(pin);
-        setPinUnlocked(Boolean(pin && isPinSessionVerified(userObj.uid)));
+        setPinUnlocked((prev) => prev || isPinSessionVerified(userObj.uid));
       } else {
-        setAuthUser(null);
-        setProfile(null);
-        setPinRecord(null);
-        setPinUnlocked(false);
+        // Nếu người dùng đã đăng nhập trước đó trên trình duyệt này, giữ nguyên phiên khi tải lại trang
+        const savedUser = getSavedAuthUser();
+        if (savedUser) {
+          setAuthUser(savedUser);
+          const cachedProfile = getLocalInterviewerProfile(savedUser.uid);
+          const cachedPin = getLocalPinSecret(savedUser.uid);
+          if (cachedProfile) setProfile(cachedProfile);
+          if (cachedPin) setPinRecord(cachedPin);
+          setPinUnlocked(isPinSessionVerified(savedUser.uid));
+        } else {
+          setAuthUser(null);
+          setProfile(null);
+          setPinRecord(null);
+          setPinUnlocked(false);
+        }
       }
       setAuthInitializing(false);
     });
@@ -230,25 +286,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (!authUser || !pinUnlocked) return;
-    const updateActivity = () => {
-      lastActivityRef.current = Date.now();
-      markPinSessionVerified(authUser.uid);
-    };
-    window.addEventListener('pointerdown', updateActivity);
-    window.addEventListener('keydown', updateActivity);
-
-    const checkInterval = setInterval(() => {
-      if (Date.now() - lastActivityRef.current > 15 * 60 * 1000) {
-        lockPinSession(authUser.uid);
-        setPinUnlocked(false);
-      }
-    }, 30000);
-
-    return () => {
-      window.removeEventListener('pointerdown', updateActivity);
-      window.removeEventListener('keydown', updateActivity);
-      clearInterval(checkInterval);
-    };
+    markPinSessionVerified(authUser.uid);
   }, [authUser, pinUnlocked]);
 
   const handleGoogleLogin = async () => {
@@ -275,13 +313,16 @@ export const App: React.FC = () => {
     updatedProfile: InterviewerProfile,
     newPinRecord?: PinSecretRecord
   ) => {
-    setProfile(updatedProfile);
+    // Lưu phiên mở khóa PIN đồng bộ ngay lập tức trước khi gọi Cloud để tải lại trang không bao giờ bị hỏi lại
+    saveLocalInterviewerProfile(updatedProfile);
     if (newPinRecord) {
+      saveLocalPinSecret(updatedProfile.uid, newPinRecord);
       setPinRecord(newPinRecord);
     }
-    await saveInterviewerProfileAndPinToCloud(updatedProfile, newPinRecord);
     markPinSessionVerified(updatedProfile.uid);
+    setProfile(updatedProfile);
     setPinUnlocked(true);
+    await saveInterviewerProfileAndPinToCloud(updatedProfile, newPinRecord);
   };
 
   const handleResetPinViaGoogle = async () => {
@@ -296,7 +337,10 @@ export const App: React.FC = () => {
     if (authUser) {
       lockPinSession(authUser.uid);
     }
+    saveAuthUserToStorage(null);
     setPinUnlocked(false);
+    setProfile(null);
+    setPinRecord(null);
     if (authUser && !authUser.isDemo) {
       await signOut(auth).catch(() => {});
     }

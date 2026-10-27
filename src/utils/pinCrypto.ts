@@ -113,7 +113,10 @@ export function clearLocalPinSecret(uid: string): void {
   }
 }
 
-export function markPinSessionVerified(uid: string, ttlMs = 8 * 60 * 60 * 1000): void {
+export function markPinSessionVerified(
+  uid: string,
+  ttlMs = 365 * 24 * 60 * 60 * 1000
+): void {
   try {
     localStorage.setItem(
       getPinSessionKey(uid),
@@ -129,7 +132,7 @@ export function isPinSessionVerified(uid: string): boolean {
     const raw = localStorage.getItem(getPinSessionKey(uid));
     if (!raw) return false;
     const data = JSON.parse(raw);
-    if (data?.verified && Date.now() < data.expiresAt) {
+    if (data?.verified && (!data.expiresAt || Date.now() < data.expiresAt)) {
       return true;
     }
     localStorage.removeItem(getPinSessionKey(uid));

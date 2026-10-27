@@ -21,11 +21,11 @@ const firebaseConfig = {
 
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Ưu tiên IndexedDB persistence cho iPadOS / iOS Safari PWA
+// Ưu tiên browserLocalPersistence (localStorage) để giữ phiên đăng nhập tức thì khi tải lại trang
 export const auth = (() => {
   try {
     return initializeAuth(app, {
-      persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+      persistence: [browserLocalPersistence, indexedDBLocalPersistence],
       popupRedirectResolver: browserPopupRedirectResolver,
     });
   } catch {
@@ -34,7 +34,6 @@ export const auth = (() => {
 })();
 
 export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 // Kết nối tới database chuyên biệt `pkt-survey` trong project `banafi-kpi`
 // Bật experimentalAutoDetectLongPolling để hoạt động ổn định trên mạng 4G/Wi-Fi đỉnh Bà Nà

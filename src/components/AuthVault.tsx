@@ -6,6 +6,7 @@ import {
   PinSecretRecord,
   createPinSecret,
   verifyPinAgainstRecord,
+  markPinSessionVerified,
   getLocalPinAttempts,
   recordFailedPinAttemptLocal,
   resetLocalPinAttempts,
@@ -124,6 +125,7 @@ export const AuthVault: React.FC<AuthVaultProps> = ({
 
   const succeed = useCallback(
     async (updatedProfile: InterviewerProfile, newPin?: PinSecretRecord) => {
+      markPinSessionVerified(updatedProfile.uid);
       setError(null);
       setPhase('success');
       await wait(SUCCESS_HOLD_MS);
