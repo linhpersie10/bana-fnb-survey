@@ -45,6 +45,12 @@ service cloud.firestore {
       allow write: if isAdminOrSuper();
     }
 
+    // Cấu hình hệ thống khảo sát (Vị trí, Danh sách đáp án, Định dạng dữ liệu)
+    match /FNB_SURVEY_config/{configId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSuper();
+    }
+
     // Dữ liệu phiếu khảo sát F&B Sun World Ba Na Hills
     match /FNB_SURVEY_responses/{responseId} {
       allow read: if isSignedIn();

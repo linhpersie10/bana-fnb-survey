@@ -10,6 +10,7 @@ import {
   BarChart3,
   Database,
   Users,
+  Settings,
   Lock,
   Wifi,
   WifiOff,
@@ -19,9 +20,13 @@ import {
 import { auth, googleProvider } from './firebase';
 import {
   SurveyResponseData,
-  SURVEY_LOCATIONS,
   createEmptySurveyResponse,
 } from './data/surveySchema';
+import {
+  SurveySystemConfig,
+  getLocalSurveyConfig,
+  subscribeToSurveyConfig,
+} from './services/surveyConfig';
 import {
   InterviewerProfile,
   UserRole,
@@ -50,9 +55,10 @@ import { SurveyWizard } from './components/SurveyWizard';
 import { QuotaDashboard } from './components/QuotaDashboard';
 import { ResponsesTable } from './components/ResponsesTable';
 import { UserManagement } from './components/UserManagement';
+import { SystemSettings } from './components/SystemSettings';
 import { BrandMark } from './components/BrandMark';
 
-type ActiveTab = 'survey' | 'quota' | 'data' | 'users';
+type ActiveTab = 'survey' | 'quota' | 'data' | 'users' | 'settings';
 
 interface AuthUserState {
   uid: string;
@@ -91,6 +97,9 @@ export const App: React.FC = () => {
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
   const [responses, setResponses] = useState<SurveyResponseData[]>([]);
+  const [surveyConfig, setSurveyConfig] = useState<SurveySystemConfig>(() =>
+    getLocalSurveyConfig()
+  );
 
   // Survey state
   const [bilingual, setBilingual] = useState<boolean>(false);
@@ -170,10 +179,16 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (!authUser || !pinUnlocked) return;
-    const unsub = subscribeToSurveyResponses(Boolean(authUser.isDemo), (list) => {
+    const unsubResponses = subscribeToSurveyResponses(Boolean(authUser.isDemo), (list) => {
       setResponses(list);
     });
-    return () => unsub();
+    const unsubConfig = subscribeToSurveyConfig((cfg) => {
+      setSurveyConfig(cfg);
+    });
+    return () => {
+      unsubResponses();
+      unsubConfig();
+    };
   }, [authUser, pinUnlocked]);
 
   useEffect(() => {
@@ -190,7 +205,9 @@ export const App: React.FC = () => {
         profile.email,
         profile.defaultLocationId,
         profile.defaultGiftName,
-        myCount + 1
+        myCount + 1,
+        surveyConfig.dataFormat.surveyCodePrefix,
+        surveyConfig.locations
       );
       setFormData(fresh);
       setStepIndex(0);
@@ -296,13 +313,15 @@ export const App: React.FC = () => {
       profile.email,
       formData.locationId || profile.defaultLocationId,
       formData.giftName || profile.defaultGiftName,
-      myCount + 1
+      myCount + 1,
+      surveyConfig.dataFormat.surveyCodePrefix,
+      surveyConfig.locations
     );
     setFormData(nextForm);
     setStepIndex(0);
     setElapsedSeconds(0);
     setTimerRunning(false);
-  }, [profile, responses, formData.locationId, formData.giftName]);
+  }, [profile, responses, formData.locationId, formData.giftName, surveyConfig]);
 
   const handleSubmitSurvey = async (finalData: SurveyResponseData) => {
     setTimerRunning(false);
@@ -409,7 +428,7 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#f6f7f9] text-slate-900 flex flex-col">
-      {/* Compact Header (Chuẩn PKT Payment) */}
+      {/* Compact Header (Ban Ẩm Thực) */}
       <header className="sticky top-0 z-40 bg-white border-b border-slate-200">
         <div className="max-w-5xl mx-auto px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3 min-w-0">
@@ -425,7 +444,7 @@ export const App: React.FC = () => {
               </span>
               <span className="inline-flex items-center gap-1 text-xs text-slate-500 truncate">
                 <MapPin className="w-3 h-3 text-[#d12f2f] shrink-0" />
-                {SURVEY_LOCATIONS.find((l) => l.id === formData.locationId)?.name}
+                {surveyConfig.locations.find((l) => l.id === formData.locationId)?.name}
               </span>
             </div>
           </div>
@@ -497,7 +516,7 @@ export const App: React.FC = () => {
               }`}
             >
               <BarChart3 className="w-3.5 h-3.5" />
-              Quota ({validCount}/600)
+              Quota ({validCount}/{surveyConfig.dataFormat.totalQuotaTarget || 600})
             </button>
           )}
 
@@ -530,6 +549,21 @@ export const App: React.FC = () => {
               Phân quyền
             </button>
           )}
+
+          {isAdminOrSuper && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('settings')}
+              className={`px-3 py-2 text-xs font-semibold flex items-center gap-1.5 border-b-2 whitespace-nowrap transition cursor-pointer ${
+                activeTab === 'settings'
+                  ? 'border-[#d12f2f] text-[#d12f2f]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Settings className="w-3.5 h-3.5" />
+              Cấu hình
+            </button>
+          )}
         </div>
       </header>
 
@@ -538,6 +572,7 @@ export const App: React.FC = () => {
         {activeTab === 'survey' && (
           <div className="max-w-2xl mx-auto">
             <SurveyWizard
+              config={surveyConfig}
               formData={formData}
               setFormData={setFormData}
               stepIndex={stepIndex}
@@ -555,6 +590,7 @@ export const App: React.FC = () => {
         {activeTab === 'quota' && isAdminOrSuper && (
           <QuotaDashboard
             responses={responses}
+            config={surveyConfig}
             currentInterviewerUid={profile?.uid || authUser.uid}
             currentInterviewerName={profile?.displayName || authUser.displayName}
             isSuperadmin={isSuperadmin}
@@ -566,6 +602,7 @@ export const App: React.FC = () => {
         {activeTab === 'data' && (
           <ResponsesTable
             responses={visibleResponses}
+            config={surveyConfig}
             isSyncing={isSyncing}
             canExportAll={isAdminOrSuper}
             canDelete={isSuperadmin}
@@ -575,7 +612,15 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'users' && isAdminOrSuper && profile && (
-          <UserManagement currentUserProfile={profile} />
+          <UserManagement currentUserProfile={profile} config={surveyConfig} />
+        )}
+
+        {activeTab === 'settings' && isAdminOrSuper && (
+          <SystemSettings
+            config={surveyConfig}
+            actorEmail={authUser.email}
+            onConfigSaved={setSurveyConfig}
+          />
         )}
       </main>
     </div>

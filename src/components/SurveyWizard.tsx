@@ -12,41 +12,20 @@ import {
 } from 'lucide-react';
 import {
   SurveyResponseData,
-  SURVEY_LOCATIONS,
-  S1_OPTIONS,
-  S2_OPTIONS,
-  S3_OPTIONS,
-  S4_OPTIONS,
-  S5_OPTIONS,
-  S6_OPTIONS,
-  S7_OPTIONS,
-  S8_OPTIONS,
-  S9_OPTIONS,
-  A1_OPTIONS,
-  A2_OPTIONS,
-  A3_OPTIONS,
-  A3_4_OPTIONS,
-  A4_OPTIONS,
-  A4_1_OPTIONS,
   A5_ROWS,
   A5_COLUMNS,
-  A6_OPTIONS,
-  A7_OPTIONS,
-  A8_OPTIONS,
-  B1_OPTIONS,
-  B2_OPTIONS,
-  B3_1_OPTIONS,
-  B3_2_OPTIONS,
-  B3_3_OPTIONS,
   B4_ROWS,
   B5_ITEMS,
-  C1_OPTIONS,
-  C2_OPTIONS,
-  C3_OPTIONS,
   OptionItem,
 } from '../data/surveySchema';
+import {
+  SurveySystemConfig,
+  QuestionKey,
+  ConfigurableOptionItem,
+} from '../services/surveyConfig';
 
 interface SurveyWizardProps {
+  config: SurveySystemConfig;
   formData: SurveyResponseData;
   setFormData: React.Dispatch<React.SetStateAction<SurveyResponseData>>;
   stepIndex: number;
@@ -68,6 +47,7 @@ const STEPS = [
 ];
 
 export const SurveyWizard: React.FC<SurveyWizardProps> = ({
+  config,
   formData,
   setFormData,
   stepIndex,
@@ -88,6 +68,11 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
   const [stepError, setStepError] = useState<string | null>(null);
 
   const safeStep = Math.min(Math.max(stepIndex, 0), STEPS.length - 1);
+  const activeLocations = config.locations.filter((l) => l.active !== false);
+
+  const getQ = (k: QuestionKey) => config.questions[k];
+  const getVisibleOpts = (k: QuestionKey): ConfigurableOptionItem[] =>
+    (config.questions[k]?.options || []).filter((o) => !o.hidden);
 
   const formatTimer = (sec: number) => {
     const m = String(Math.floor(sec / 60)).padStart(2, '0');
@@ -95,19 +80,29 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     return `${m}:${s}`;
   };
 
-  // Kiểm tra điều kiện dừng phỏng vấn (Screen-out)
-  const screenoutReason =
-    formData.S1 === 2
-      ? 'S1: Thời gian ở Bà Nà dưới 4 tiếng'
-      : formData.S2 === 3
-      ? 'S2: Người khác chi trả hoàn toàn'
-      : formData.S4 === 1
-      ? 'S4: Dưới 18 tuổi'
-      : null;
+  // Kiểm tra điều kiện dừng phỏng vấn (Screen-out) động từ cấu hình Phần S
+  const detectScreenoutReason = (): string | null => {
+    const sKeys: QuestionKey[] = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9'];
+    for (const k of sKeys) {
+      const val = formData[k] as number | null;
+      if (val !== null) {
+        const matched = config.questions[k]?.options.find((o) => o.code === val);
+        if (matched?.stopInterview) {
+          return `${k}: ${matched.label}`;
+        }
+      }
+    }
+    return null;
+  };
 
-  const isNotUsedFnB = formData.A2.includes(7);
+  const screenoutReason = detectScreenoutReason();
 
-  // Tự động lọc dòng A5 theo lựa chọn A2 (1..6)
+  // Kiểm tra nhánh chưa dùng F&B (A2 chọn đáp án exclusive hoặc mã 7)
+  const a2ExclusiveCodes = getVisibleOpts('A2')
+    .filter((o) => o.exclusive || o.code === 7)
+    .map((o) => o.code);
+  const isNotUsedFnB = formData.A2.some((c) => a2ExclusiveCodes.includes(c));
+
   const activeA5Rows = A5_ROWS.filter((r) => formData.A2.includes(r.a2Code));
 
   const updateField = <K extends keyof SurveyResponseData>(
@@ -138,20 +133,11 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         return { ...prev, [key]: [option.code] };
       }
 
-      const allOpts =
-        key === 'A2'
-          ? A2_OPTIONS
-          : key === 'B2'
-          ? B2_OPTIONS
-          : key === 'C2'
-          ? C2_OPTIONS
-          : key === 'C3'
-          ? C3_OPTIONS
-          : [];
+      const allOpts = config.questions[key]?.options || [];
       const exclusiveCodes = allOpts.filter((o) => o.exclusive).map((o) => o.code);
       const cleaned = current.filter((c) => !exclusiveCodes.includes(c));
 
-      if (maxSelect && cleaned.length >= maxSelect) {
+      if (maxSelect && maxSelect > 0 && cleaned.length >= maxSelect) {
         return prev;
       }
 
@@ -254,7 +240,6 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     }
   };
 
-  // Màn hình hoàn tất gọn nhẹ
   if (submittedState?.done) {
     return (
       <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs text-center space-y-4 my-4">
@@ -295,113 +280,117 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     );
   }
 
-  // Helper render câu hỏi 1 lựa chọn gọn gàng
-  const renderSingleSelect = (
-    title: string,
-    enTitle: string,
-    options: OptionItem[],
+  const renderSingleQuestion = (
+    qKey: QuestionKey,
     currentVal: number | null,
     onSelect: (code: number) => void,
-    cols: 1 | 2 = 2,
     disabled = false
-  ) => (
-    <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
-      <div>
-        <div className="text-sm font-semibold text-slate-900">{title}</div>
-        {bilingual && <div className="text-xs text-slate-400 mt-0.5">{enTitle}</div>}
-      </div>
-      <div className={`grid grid-cols-1 ${cols === 2 ? 'sm:grid-cols-2' : ''} gap-2`}>
-        {options.map((opt) => {
-          const active = currentVal === opt.code;
-          return (
-            <button
-              key={opt.code}
-              type="button"
-              disabled={disabled}
-              onClick={() => onSelect(opt.code)}
-              className={`px-3.5 py-2.5 rounded-xl border text-left transition flex items-start gap-2.5 cursor-pointer disabled:opacity-60 ${
-                active
-                  ? 'bg-red-50/90 border-[#d12f2f] text-slate-900 shadow-2xs'
-                  : 'bg-slate-50/70 border-slate-200/90 text-slate-700 hover:bg-slate-100/80'
-              }`}
-            >
-              <span
-                className={`w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5 ${
-                  active ? 'bg-[#d12f2f] text-white' : 'bg-white border border-slate-300 text-slate-500'
-                }`}
-              >
-                {opt.code}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium leading-snug">{opt.label}</span>
-                {bilingual && (
-                  <span className="block text-[11px] text-slate-400 leading-tight mt-0.5">
-                    {opt.en}
-                  </span>
-                )}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-
-  // Helper render câu hỏi nhiều lựa chọn gọn gàng
-  const renderMultiSelect = (
-    title: string,
-    enTitle: string,
-    badge: string,
-    options: OptionItem[],
-    selectedCodes: number[],
-    onToggle: (opt: OptionItem) => void,
-    cols: 1 | 2 = 2
-  ) => (
-    <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
-      <div className="flex items-start justify-between gap-2">
+  ) => {
+    const q = getQ(qKey);
+    const opts = getVisibleOpts(qKey);
+    return (
+      <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
         <div>
-          <div className="text-sm font-semibold text-slate-900">{title}</div>
-          {bilingual && <div className="text-xs text-slate-400 mt-0.5">{enTitle}</div>}
+          <div className="text-sm font-semibold text-slate-900">{q.title}</div>
+          {bilingual && <div className="text-xs text-slate-400 mt-0.5">{q.enTitle}</div>}
         </div>
-        <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-semibold shrink-0">
-          {badge}
-        </span>
-      </div>
-      <div className={`grid grid-cols-1 ${cols === 2 ? 'sm:grid-cols-2' : ''} gap-2`}>
-        {options.map((opt) => {
-          const active = selectedCodes.includes(opt.code);
-          return (
-            <button
-              key={opt.code}
-              type="button"
-              onClick={() => onToggle(opt)}
-              className={`px-3.5 py-2.5 rounded-xl border text-left transition flex items-start gap-2.5 cursor-pointer ${
-                active
-                  ? 'bg-red-50/90 border-[#d12f2f] text-slate-900 shadow-2xs'
-                  : 'bg-slate-50/70 border-slate-200/90 text-slate-700 hover:bg-slate-100/80'
-              }`}
-            >
-              <span
-                className={`w-5 h-5 rounded-md text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5 ${
-                  active ? 'bg-[#d12f2f] text-white' : 'bg-white border border-slate-300 text-slate-500'
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {opts.map((opt) => {
+            const active = currentVal === opt.code;
+            return (
+              <button
+                key={opt.code}
+                type="button"
+                disabled={disabled}
+                onClick={() => onSelect(opt.code)}
+                className={`px-3.5 py-2.5 rounded-xl border text-left transition flex items-start gap-2.5 cursor-pointer disabled:opacity-60 ${
+                  active
+                    ? 'bg-red-50/90 border-[#d12f2f] text-slate-900 shadow-2xs'
+                    : 'bg-slate-50/70 border-slate-200/90 text-slate-700 hover:bg-slate-100/80'
                 }`}
               >
-                {opt.code}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium leading-snug">{opt.label}</span>
-                {bilingual && (
-                  <span className="block text-[11px] text-slate-400 leading-tight mt-0.5">
-                    {opt.en}
-                  </span>
-                )}
-              </span>
-            </button>
-          );
-        })}
+                <span
+                  className={`w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5 ${
+                    active
+                      ? 'bg-[#d12f2f] text-white'
+                      : 'bg-white border border-slate-300 text-slate-500'
+                  }`}
+                >
+                  {opt.code}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium leading-snug">{opt.label}</span>
+                  {bilingual && (
+                    <span className="block text-[11px] text-slate-400 leading-tight mt-0.5">
+                      {opt.en}
+                    </span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  const renderMultiQuestion = (
+    qKey: 'A2' | 'A3' | 'A6' | 'B1' | 'B2' | 'C1' | 'C2' | 'C3',
+    selectedCodes: number[]
+  ) => {
+    const q = getQ(qKey);
+    const opts = getVisibleOpts(qKey);
+    const maxSel = q.maxSelect || 0;
+    const badge = maxSel > 0 ? `Tối đa ${maxSel}` : 'Chọn nhiều';
+    return (
+      <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">{q.title}</div>
+            {bilingual && <div className="text-xs text-slate-400 mt-0.5">{q.enTitle}</div>}
+          </div>
+          <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-semibold shrink-0">
+            {badge}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {opts.map((opt) => {
+            const active = selectedCodes.includes(opt.code);
+            return (
+              <button
+                key={opt.code}
+                type="button"
+                onClick={() => toggleMultiOption(qKey, opt, maxSel)}
+                className={`px-3.5 py-2.5 rounded-xl border text-left transition flex items-start gap-2.5 cursor-pointer ${
+                  active
+                    ? 'bg-red-50/90 border-[#d12f2f] text-slate-900 shadow-2xs'
+                    : 'bg-slate-50/70 border-slate-200/90 text-slate-700 hover:bg-slate-100/80'
+                }`}
+              >
+                <span
+                  className={`w-5 h-5 rounded-md text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5 ${
+                    active
+                      ? 'bg-[#d12f2f] text-white'
+                      : 'bg-white border border-slate-300 text-slate-500'
+                  }`}
+                >
+                  {opt.code}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium leading-snug">{opt.label}</span>
+                  {bilingual && (
+                    <span className="block text-[11px] text-slate-400 leading-tight mt-0.5">
+                      {opt.en}
+                    </span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-3.5 pb-16">
@@ -414,7 +403,7 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
             onChange={(e) => updateField('locationId', Number(e.target.value))}
             className="px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800"
           >
-            {SURVEY_LOCATIONS.map((loc) => (
+            {activeLocations.map((loc) => (
               <option key={loc.id} value={loc.id}>
                 {loc.name}
               </option>
@@ -475,7 +464,6 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         })}
       </div>
 
-      {/* Error Toast */}
       {stepError && (
         <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
           <AlertOctagon className="w-4 h-4 shrink-0" />
@@ -483,7 +471,6 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         </div>
       )}
 
-      {/* Screen-out Instant Banner */}
       {screenoutReason && (
         <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="text-xs text-amber-900">
@@ -501,44 +488,14 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         </div>
       )}
 
-      {/* ==================== BƯỚC 0: PHẦN S — SÀNG LỌC ==================== */}
+      {/* ==================== BƯỚC 0: PHẦN S ==================== */}
       {safeStep === 0 && (
         <div className="space-y-3">
-          {renderSingleSelect(
-            'S1. Thời gian tham quan tại Bà Nà hôm nay?',
-            'Have you spent at least 4 hours at Ba Na Hills today?',
-            S1_OPTIONS,
-            formData.S1,
-            (c) => updateField('S1', c)
-          )}
-          {renderSingleSelect(
-            'S2. Anh/Chị có trực tiếp chi trả chi phí ăn uống hôm nay?',
-            'Are you directly paying for F&B expenses today?',
-            S2_OPTIONS,
-            formData.S2,
-            (c) => updateField('S2', c)
-          )}
-          {renderSingleSelect(
-            'S3. Giới tính',
-            'Gender',
-            S3_OPTIONS,
-            formData.S3,
-            (c) => updateField('S3', c)
-          )}
-          {renderSingleSelect(
-            'S4. Độ tuổi',
-            'Age group',
-            S4_OPTIONS,
-            formData.S4,
-            (c) => updateField('S4', c)
-          )}
-          {renderSingleSelect(
-            'S5. Nơi sinh sống / Quốc tịch',
-            'Residence / Nationality',
-            S5_OPTIONS,
-            formData.S5,
-            (c) => updateField('S5', c)
-          )}
+          {renderSingleQuestion('S1', formData.S1, (c) => updateField('S1', c))}
+          {renderSingleQuestion('S2', formData.S2, (c) => updateField('S2', c))}
+          {renderSingleQuestion('S3', formData.S3, (c) => updateField('S3', c))}
+          {renderSingleQuestion('S4', formData.S4, (c) => updateField('S4', c))}
+          {renderSingleQuestion('S5', formData.S5, (c) => updateField('S5', c))}
           {formData.S5 === 10 && (
             <input
               type="text"
@@ -548,34 +505,10 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
               className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-sm"
             />
           )}
-          {renderSingleSelect(
-            'S6. Đi cùng ai trong chuyến đi hôm nay?',
-            'Who are you traveling with today?',
-            S6_OPTIONS,
-            formData.S6,
-            (c) => updateField('S6', c)
-          )}
-          {renderSingleSelect(
-            'S7. Hình thức chuyến đi',
-            'Travel mode',
-            S7_OPTIONS,
-            formData.S7,
-            (c) => updateField('S7', c)
-          )}
-          {renderSingleSelect(
-            'S8. Số lần đến Sun World Ba Na Hills',
-            'Visit frequency',
-            S8_OPTIONS,
-            formData.S8,
-            (c) => updateField('S8', c)
-          )}
-          {renderSingleSelect(
-            'S9. Loại vé / Gói sản phẩm sử dụng hôm nay',
-            'Ticket / Combo type used today',
-            S9_OPTIONS,
-            formData.S9,
-            (c) => updateField('S9', c)
-          )}
+          {renderSingleQuestion('S6', formData.S6, (c) => updateField('S6', c))}
+          {renderSingleQuestion('S7', formData.S7, (c) => updateField('S7', c))}
+          {renderSingleQuestion('S8', formData.S8, (c) => updateField('S8', c))}
+          {renderSingleQuestion('S9', formData.S9, (c) => updateField('S9', c))}
         </div>
       )}
 
@@ -598,24 +531,13 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
             </div>
           )}
 
-          {renderSingleSelect(
-            'A1. Ngân sách dự kiến chi cho ăn uống & đồ uống (1 người)?',
-            'Planned F&B budget per person today?',
-            A1_OPTIONS,
+          {renderSingleQuestion(
+            'A1',
             formData.A1,
             (c) => updateField('A1', c),
-            2,
             formData.A1_locked
           )}
-
-          {renderMultiSelect(
-            'A2. Dịch vụ ăn uống đã sử dụng tại Bà Nà hôm nay?',
-            'Which F&B services have you used today?',
-            'Chọn nhiều',
-            A2_OPTIONS,
-            formData.A2,
-            (opt) => toggleMultiOption('A2', opt)
-          )}
+          {renderMultiQuestion('A2', formData.A2)}
         </div>
       )}
 
@@ -624,14 +546,7 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         <div className="space-y-3">
           {isNotUsedFnB ? (
             <>
-              {renderMultiSelect(
-                'A3. Lý do chưa sử dụng dịch vụ ẩm thực tại Bà Nà?',
-                'Main reasons for not using F&B services today?',
-                'Tối đa 2',
-                A3_OPTIONS,
-                formData.A3,
-                (opt) => toggleMultiOption('A3', opt, 2)
-              )}
+              {renderMultiQuestion('A3', formData.A3)}
 
               {formData.A3.includes(1) && (
                 <input
@@ -667,37 +582,18 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
                 />
               )}
 
-              {renderSingleSelect(
-                'A3.4. Nếu khắc phục các điểm trên, Anh/Chị có sẵn sàng chi tiêu?',
-                'Would you spend on F&B if these were improved?',
-                A3_4_OPTIONS,
-                formData.A3_4,
-                (c) => updateField('A3_4', c)
-              )}
+              {renderSingleQuestion('A3_4', formData.A3_4, (c) => updateField('A3_4', c))}
             </>
           ) : (
             <>
-              {renderSingleSelect(
-                'A4. Thực tế đã chi bao nhiêu cho ăn uống hôm nay (1 người)?',
-                'Actual F&B spending per person today?',
-                A4_OPTIONS,
-                formData.A4,
-                (c) => updateField('A4', c)
-              )}
+              {renderSingleQuestion('A4', formData.A4, (c) => updateField('A4', c))}
 
               {(formData.A4 === 8 ||
                 formData.S9 === 2 ||
                 formData.S9 === 3 ||
                 formData.S9 === 4) &&
-                renderSingleSelect(
-                  'A4.1. Chi thêm ngoài phần đã bao gồm trong vé/tour (1 người)?',
-                  'Extra F&B spending beyond package/combo per person?',
-                  A4_1_OPTIONS,
-                  formData.A4_1,
-                  (c) => updateField('A4_1', c)
-                )}
+                renderSingleQuestion('A4_1', formData.A4_1, (c) => updateField('A4_1', c))}
 
-              {/* Ma trận A5 gọn nhẹ */}
               {activeA5Rows.length > 0 && (
                 <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-3">
                   <div className="text-sm font-semibold text-slate-900">
@@ -737,82 +633,25 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
                 </div>
               )}
 
-              {renderMultiSelect(
-                'A6. Yếu tố ảnh hưởng nhất khi chọn nơi ăn uống hôm nay?',
-                'Top factors influencing your F&B choice today?',
-                'Tối đa 2',
-                A6_OPTIONS,
-                formData.A6,
-                (opt) => toggleMultiOption('A6', opt, 2)
-              )}
-
-              {renderSingleSelect(
-                'A7. Từ giờ đến khi rời Bà Nà, có dự định chi thêm cho F&B?',
-                'Do you plan to spend more on F&B before leaving?',
-                A7_OPTIONS,
-                formData.A7,
-                (c) => updateField('A7', c)
-              )}
+              {renderMultiQuestion('A6', formData.A6)}
+              {renderSingleQuestion('A7', formData.A7, (c) => updateField('A7', c))}
 
               {(formData.A7 === 1 || formData.A7 === 2) &&
-                renderSingleSelect(
-                  'A8. Dự kiến chi thêm khoảng bao nhiêu (1 người)?',
-                  'Estimated additional spending per person?',
-                  A8_OPTIONS,
-                  formData.A8,
-                  (c) => updateField('A8', c)
-                )}
+                renderSingleQuestion('A8', formData.A8, (c) => updateField('A8', c))}
             </>
           )}
         </div>
       )}
 
-      {/* ==================== BƯỚC 3: PHẦN B — ĐÁNH GIÁ & GIÁ ==================== */}
+      {/* ==================== BƯỚC 3: PHẦN B ==================== */}
       {safeStep === 3 && (
         <div className="space-y-3">
-          {renderMultiSelect(
-            'B1. Phong cách ẩm thực mong muốn có tại Bà Nà?',
-            'Preferred cuisine styles at Ba Na Hills?',
-            'Tối đa 3',
-            B1_OPTIONS,
-            formData.B1,
-            (opt) => toggleMultiOption('B1', opt, 3)
-          )}
+          {renderMultiQuestion('B1', formData.B1)}
+          {renderMultiQuestion('B2', formData.B2)}
+          {renderSingleQuestion('B3_1', formData.B3_1, (c) => updateField('B3_1', c))}
+          {renderSingleQuestion('B3_2', formData.B3_2, (c) => updateField('B3_2', c))}
+          {renderSingleQuestion('B3_3', formData.B3_3, (c) => updateField('B3_3', c))}
 
-          {renderMultiSelect(
-            'B2. Yêu cầu đặc biệt về chế độ ăn uống?',
-            'Special dietary requirements?',
-            'Tối đa 2',
-            B2_OPTIONS,
-            formData.B2,
-            (opt) => toggleMultiOption('B2', opt, 2)
-          )}
-
-          {renderSingleSelect(
-            'B3.1. Hình thức phục vụ ưu tiên cho bữa chính?',
-            'Preferred service style for main meal?',
-            B3_1_OPTIONS,
-            formData.B3_1,
-            (c) => updateField('B3_1', c)
-          )}
-
-          {renderSingleSelect(
-            'B3.2. Mức độ sẵn sàng thử ẩm thực mới lạ / đặc trưng?',
-            'Willingness to try new/signature dishes?',
-            B3_2_OPTIONS,
-            formData.B3_2,
-            (c) => updateField('B3_2', c)
-          )}
-
-          {renderSingleSelect(
-            'B3.3. Thời gian tối đa chấp nhận chờ món?',
-            'Maximum acceptable waiting time?',
-            B3_3_OPTIONS,
-            formData.B3_3,
-            (c) => updateField('B3_3', c)
-          )}
-
-          {/* B4 Cảm nhận giá */}
           <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
             <div className="text-sm font-semibold text-slate-900">
               B4. Cảm nhận mức giá hiện tại (1: Đắt • 2: Hợp lý • 3: Rẻ)
@@ -854,7 +693,6 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
             </div>
           </div>
 
-          {/* B5 SERVQUAL 1..5 */}
           {!isNotUsedFnB && (
             <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
               <div className="text-sm font-semibold text-slate-900">
@@ -896,59 +734,40 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         </div>
       )}
 
-      {/* ==================== BƯỚC 4: PHẦN C — ĐỀ XUẤT ==================== */}
+      {/* ==================== BƯỚC 4: PHẦN C ==================== */}
       {safeStep === 4 && (
         <div className="space-y-3">
-          {renderMultiSelect(
-            'C1. Mong muốn cải thiện nhất về dịch vụ F&B tại Bà Nà?',
-            'Top improvements needed for F&B services?',
-            'Tối đa 2',
-            C1_OPTIONS,
-            formData.C1,
-            (opt) => toggleMultiOption('C1', opt, 2)
-          )}
+          {renderMultiQuestion('C1', formData.C1)}
+          {renderMultiQuestion('C2', formData.C2)}
+          {renderMultiQuestion('C3', formData.C3)}
 
-          {renderMultiSelect(
-            'C2. Trải nghiệm ăn uống kết hợp giải trí sẵn sàng chi thêm?',
-            'Dining + entertainment experiences willing to pay extra for?',
-            'Tối đa 2',
-            C2_OPTIONS,
-            formData.C2,
-            (opt) => toggleMultiOption('C2', opt, 2)
-          )}
-
-          {renderMultiSelect(
-            'C3. Sản phẩm F&B đóng gói sẵn muốn mua làm quà mang về?',
-            'Packaged F&B souvenirs you would buy to take home?',
-            'Tối đa 3',
-            C3_OPTIONS,
-            formData.C3,
-            (opt) => toggleMultiOption('C3', opt, 3)
-          )}
-
-          <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2">
+          <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
             <label className="block text-sm font-semibold text-slate-900">
-              Ghi chú / Ý kiến mở của du khách &amp; Quà tặng
+              Ghi chú ý kiến mở &amp; Chọn quà tặng
             </label>
             <input
               type="text"
               value={formData.C4_note}
               onChange={(e) => updateField('C4_note', e.target.value)}
-              placeholder="Ghi ngắn gọn ý kiến thêm (nếu có)..."
+              placeholder="Ghi ngắn gọn ý kiến thêm của du khách (nếu có)..."
               className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm"
             />
-            <input
-              type="text"
+            <select
               value={formData.giftName}
               onChange={(e) => updateField('giftName', e.target.value)}
-              placeholder="Tên quà tặng đã phát..."
-              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600"
-            />
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700"
+            >
+              {config.giftPresets.map((g) => (
+                <option key={g} value={g}>
+                  Quà tặng: {g}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       )}
 
-      {/* Bottom Sticky Action Buttons */}
+      {/* Bottom Action Bar */}
       <div className="flex items-center justify-between gap-3 pt-2">
         <button
           type="button"

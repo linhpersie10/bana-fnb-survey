@@ -4,10 +4,12 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { SurveyResponseData, SURVEY_LOCATIONS } from '../data/surveySchema';
+import { SurveyResponseData } from '../data/surveySchema';
+import { SurveySystemConfig } from '../services/surveyConfig';
 
 interface QuotaDashboardProps {
   responses: SurveyResponseData[];
+  config: SurveySystemConfig;
   currentInterviewerUid: string;
   currentInterviewerName: string;
   isSuperadmin?: boolean;
@@ -17,12 +19,16 @@ interface QuotaDashboardProps {
 
 export const QuotaDashboard: React.FC<QuotaDashboardProps> = ({
   responses,
+  config,
   currentInterviewerUid,
   currentInterviewerName,
   isSuperadmin = false,
   onSeedPilotSamples,
   onClearPilotSamples,
 }) => {
+  const activeLocations = config.locations.filter((l) => l.active !== false);
+  const totalQuotaTarget = config.dataFormat.totalQuotaTarget || 600;
+  const dailyTargetPerPvv = config.dataFormat.dailyTargetPerPvv || 20;
   const validResponses = responses.filter((r) => r.status === 'completed');
   const screenoutResponses = responses.filter((r) => r.status === 'screenout');
   const totalValid = validResponses.length;
@@ -69,14 +75,14 @@ export const QuotaDashboard: React.FC<QuotaDashboardProps> = ({
         <div className="bg-white rounded-2xl p-4 border border-slate-200">
           <div className="text-xs text-slate-500">Tổng mẫu hợp lệ</div>
           <div className="text-2xl font-bold text-slate-900 mt-1">
-            {totalValid} <span className="text-sm font-normal text-slate-400">/ 600</span>
+            {totalValid} <span className="text-sm font-normal text-slate-400">/ {totalQuotaTarget}</span>
           </div>
         </div>
 
         <div className="bg-white rounded-2xl p-4 border border-slate-200">
           <div className="text-xs text-slate-500 truncate">Hôm nay ({currentInterviewerName})</div>
           <div className="text-2xl font-bold text-[#d12f2f] mt-1">
-            {myTodayCount} <span className="text-sm font-normal text-slate-400">/ 20 mẫu</span>
+            {myTodayCount} <span className="text-sm font-normal text-slate-400">/ {dailyTargetPerPvv} mẫu</span>
           </div>
         </div>
 
@@ -123,10 +129,10 @@ export const QuotaDashboard: React.FC<QuotaDashboardProps> = ({
         <div className="bg-white rounded-2xl p-4 border border-slate-200 space-y-3">
           <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
             <MapPin className="w-4 h-4 text-[#d12f2f]" />
-            Tiến độ 5 điểm khảo sát (120 mẫu/điểm)
+            Tiến độ các điểm khảo sát ({activeLocations.length} điểm)
           </h3>
           <div className="space-y-2.5">
-            {SURVEY_LOCATIONS.map((loc) => {
+            {activeLocations.map((loc) => {
               const c = validResponses.filter((r) => r.locationId === loc.id).length;
               return <div key={loc.id}>{renderBar(loc.name, c, loc.quotaTarget)}</div>;
             })}
@@ -135,13 +141,13 @@ export const QuotaDashboard: React.FC<QuotaDashboardProps> = ({
 
         <div className="bg-white rounded-2xl p-4 border border-slate-200 space-y-3">
           <h3 className="text-sm font-bold text-slate-900">
-            Cơ cấu Nguồn khách &amp; Chuyến đi (n = 600)
+            Cơ cấu Nguồn khách &amp; Chuyến đi (n = {totalQuotaTarget})
           </h3>
           <div className="space-y-2.5">
-            {renderBar('Khách Nội địa (45%)', domesticCount, 270)}
-            {renderBar('Khách Quốc tế (55%)', intlCount, 330)}
-            {renderBar('Khách Tự túc - FIT (60%)', s7Fit, 360)}
-            {renderBar('Khách đi Tour trọn gói (40%)', s7Tour, 240)}
+            {renderBar('Khách Nội địa (45%)', domesticCount, Math.round(totalQuotaTarget * 0.45))}
+            {renderBar('Khách Quốc tế (55%)', intlCount, Math.round(totalQuotaTarget * 0.55))}
+            {renderBar('Khách Tự túc - FIT (60%)', s7Fit, Math.round(totalQuotaTarget * 0.6))}
+            {renderBar('Khách đi Tour trọn gói (40%)', s7Tour, Math.round(totalQuotaTarget * 0.4))}
           </div>
         </div>
       </div>

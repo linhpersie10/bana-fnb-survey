@@ -11,7 +11,6 @@ import {
   UserCheck,
   Users,
 } from 'lucide-react';
-import { SURVEY_LOCATIONS } from '../data/surveySchema';
 import {
   InterviewerProfile,
   UserRole,
@@ -20,9 +19,11 @@ import {
   resetUserPinByAdmin,
   preAssignRoleByEmail,
 } from '../services/surveyStorage';
+import { SurveySystemConfig } from '../services/surveyConfig';
 
 interface UserManagementProps {
   currentUserProfile: InterviewerProfile;
+  config: SurveySystemConfig;
 }
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -31,7 +32,8 @@ const ROLE_LABELS: Record<UserRole, string> = {
   interviewer: 'Đáp viên',
 };
 
-export const UserManagement: React.FC<UserManagementProps> = ({ currentUserProfile }) => {
+export const UserManagement: React.FC<UserManagementProps> = ({ currentUserProfile, config }) => {
+  const activeLocations = config.locations.filter((l) => l.active !== false);
   const [users, setUsers] = useState<InterviewerProfile[]>([]);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<UserRole | 'all'>('all');
@@ -200,7 +202,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUserProfi
           onChange={(e) => setNewLocationId(Number(e.target.value))}
           className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium text-slate-700"
         >
-          {SURVEY_LOCATIONS.map((loc) => (
+          {activeLocations.map((loc) => (
             <option key={loc.id} value={loc.id}>
               {loc.name}
             </option>
@@ -285,7 +287,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUserProfi
                           onChange={(e) => void handleLocationChange(u, Number(e.target.value))}
                           className="px-2 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700"
                         >
-                          {SURVEY_LOCATIONS.map((loc) => (
+                          {config.locations.map((loc) => (
                             <option key={loc.id} value={loc.id}>
                               {loc.name}
                             </option>

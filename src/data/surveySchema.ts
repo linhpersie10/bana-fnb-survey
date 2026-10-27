@@ -491,7 +491,9 @@ export function createEmptySurveyResponse(
   interviewerEmail: string,
   locationId: number,
   giftName: string,
-  sequenceNumber = 1
+  sequenceNumber = 1,
+  codePrefix = 'BN',
+  customLocations: SurveyLocation[] = SURVEY_LOCATIONS
 ): SurveyResponseData {
   const now = new Date();
   const yyyy = now.getFullYear();
@@ -500,13 +502,14 @@ export function createEmptySurveyResponse(
   const hh = String(now.getHours()).padStart(2, '0');
   const min = String(now.getMinutes()).padStart(2, '0');
   const ss = String(now.getSeconds()).padStart(2, '0');
-  const loc = SURVEY_LOCATIONS.find((l) => l.id === locationId)?.shortCode || 'BN';
+  const loc = customLocations.find((l) => l.id === locationId)?.shortCode || 'BN';
   const seqStr = String(sequenceNumber).padStart(3, '0');
   const randSuffix = String(Math.floor(10 + Math.random() * 89));
+  const cleanPrefix = (codePrefix || 'BN').trim().toUpperCase();
 
   return {
     id: `SRV_${yyyy}${mm}${dd}_${loc}_${Date.now()}_${randSuffix}`,
-    surveyCode: `BN-${dd}${mm}-${loc}-${seqStr}`,
+    surveyCode: `${cleanPrefix}-${dd}${mm}-${loc}-${seqStr}`,
     surveyDate: `${yyyy}-${mm}-${dd}`,
     startTime: `${hh}:${min}:${ss}`,
     endTime: '',
@@ -586,7 +589,46 @@ export function createEmptySurveyResponse(
   };
 }
 
-export function exportResponsesToCsv(responses: SurveyResponseData[]): void {
+export interface CsvExportOptions {
+  delimiter?: ',' | ';';
+  valueMode?: 'code_and_label' | 'code_only' | 'label_only';
+  multiSelectSeparator?: string;
+  locations?: SurveyLocation[];
+  questionOptionsMap?: Record<string, OptionItem[]>;
+}
+
+export function exportResponsesToCsv(
+  responses: SurveyResponseData[],
+  opts?: CsvExportOptions
+): void {
+  const delimiter = opts?.delimiter || ',';
+  const valueMode = opts?.valueMode || 'code_only';
+  const multiSep = opts?.multiSelectSeparator || '; ';
+  const locs = opts?.locations || SURVEY_LOCATIONS;
+  const qMap = opts?.questionOptionsMap || {};
+
+  const formatSingle = (qKey: string, code: number | null, fallbackOpts: OptionItem[]) => {
+    if (code === null || code === undefined) return '';
+    if (valueMode === 'code_only') return String(code);
+    const list = qMap[qKey] || fallbackOpts;
+    const found = list.find((o) => o.code === code);
+    if (!found) return String(code);
+    return valueMode === 'label_only' ? found.label : `${code} - ${found.label}`;
+  };
+
+  const formatMulti = (qKey: string, codes: number[], fallbackOpts: OptionItem[]) => {
+    if (!Array.isArray(codes) || codes.length === 0) return '';
+    if (valueMode === 'code_only') return codes.join(multiSep.trim() || ';');
+    const list = qMap[qKey] || fallbackOpts;
+    return codes
+      .map((c) => {
+        const found = list.find((o) => o.code === c);
+        if (!found) return String(c);
+        return valueMode === 'label_only' ? found.label : `${c} - ${found.label}`;
+      })
+      .join(multiSep);
+  };
+
   const headers = [
     'ID',
     'Ma_Phieu',
@@ -658,8 +700,8 @@ export function exportResponsesToCsv(responses: SurveyResponseData[]): void {
 
   const escapeCsv = (val: unknown): string => {
     if (val === null || val === undefined) return '';
-    const str = Array.isArray(val) ? val.join(';') : String(val);
-    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    const str = Array.isArray(val) ? val.join(multiSep) : String(val);
+    if (str.includes(delimiter) || str.includes('"') || str.includes('\n')) {
       return `"${str.replace(/"/g, '""')}"`;
     }
     return str;
@@ -668,6 +710,14 @@ export function exportResponsesToCsv(responses: SurveyResponseData[]): void {
   const rows = responses.map((r) => {
     const isDomestic = r.S5 !== null && r.S5 >= 1 && r.S5 <= 4;
     const guestSource = r.S5 === null ? '' : isDomestic ? 'Nội địa' : 'Quốc tế';
+    const locObj = locs.find((l) => l.id === r.locationId);
+    const locDisplay =
+      valueMode === 'code_only'
+        ? r.locationId
+        : valueMode === 'label_only'
+        ? locObj?.name || r.locationId
+        : `${r.locationId} - ${locObj?.name || ''}`;
+
     return [
       r.id,
       r.surveyCode,
@@ -675,49 +725,49 @@ export function exportResponsesToCsv(responses: SurveyResponseData[]): void {
       r.startTime,
       r.endTime,
       r.durationSeconds,
-      r.locationId,
+      locDisplay,
       r.interviewerName,
       r.interviewerEmail,
       r.giftName,
       r.status,
       r.screenoutReason || '',
-      r.S1,
-      r.S2,
-      r.S3,
-      r.S4,
-      r.S5,
+      formatSingle('S1', r.S1, S1_OPTIONS),
+      formatSingle('S2', r.S2, S2_OPTIONS),
+      formatSingle('S3', r.S3, S3_OPTIONS),
+      formatSingle('S4', r.S4, S4_OPTIONS),
+      formatSingle('S5', r.S5, S5_OPTIONS),
       r.S5_other,
       guestSource,
-      r.S6,
-      r.S7,
-      r.S8,
-      r.S9,
-      r.A1,
-      r.A2,
-      r.A3,
+      formatSingle('S6', r.S6, S6_OPTIONS),
+      formatSingle('S7', r.S7, S7_OPTIONS),
+      formatSingle('S8', r.S8, S8_OPTIONS),
+      formatSingle('S9', r.S9, S9_OPTIONS),
+      formatSingle('A1', r.A1, A1_OPTIONS),
+      formatMulti('A2', r.A2, A2_OPTIONS),
+      formatMulti('A3', r.A3, A3_OPTIONS),
       r.A3_other,
       r.A3_1,
       r.A3_2,
       r.A3_3,
-      r.A3_4,
-      r.A4,
-      r.A4_1,
+      formatSingle('A3_4', r.A3_4, A3_4_OPTIONS),
+      formatSingle('A4', r.A4, A4_OPTIONS),
+      formatSingle('A4_1', r.A4_1, A4_1_OPTIONS),
       r.A5?.buffet,
       r.A5?.alacarte,
       r.A5?.fastfood,
       r.A5?.pastry,
       r.A5?.beverage,
       r.A5?.souvenir,
-      r.A6,
+      formatMulti('A6', r.A6, A6_OPTIONS),
       r.A6_other,
-      r.A7,
-      r.A8,
-      r.B1,
+      formatSingle('A7', r.A7, A7_OPTIONS),
+      formatSingle('A8', r.A8, A8_OPTIONS),
+      formatMulti('B1', r.B1, B1_OPTIONS),
       r.B1_other,
-      r.B2,
-      r.B3_1,
-      r.B3_2,
-      r.B3_3,
+      formatMulti('B2', r.B2, B2_OPTIONS),
+      formatSingle('B3_1', r.B3_1, B3_1_OPTIONS),
+      formatSingle('B3_2', r.B3_2, B3_2_OPTIONS),
+      formatSingle('B3_3', r.B3_3, B3_3_OPTIONS),
       r.B4?.buffet,
       r.B4?.alacarte,
       r.B4?.fastfood,
@@ -729,16 +779,18 @@ export function exportResponsesToCsv(responses: SurveyResponseData[]): void {
       r.B5?.B5_4,
       r.B5?.B5_5,
       r.B5?.B5_6,
-      r.C1,
-      r.C2,
+      formatMulti('C1', r.C1, C1_OPTIONS),
+      formatMulti('C2', r.C2, C2_OPTIONS),
       r.C2_other,
-      r.C3,
+      formatMulti('C3', r.C3, C3_OPTIONS),
       r.C3_other,
       r.C4_note,
-    ].map(escapeCsv).join(',');
+    ]
+      .map(escapeCsv)
+      .join(delimiter);
   });
 
-  const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+  const csvContent = '\uFEFF' + [headers.join(delimiter), ...rows].join('\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

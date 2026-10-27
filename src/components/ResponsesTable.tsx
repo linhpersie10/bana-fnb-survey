@@ -13,20 +13,14 @@ import {
 } from 'lucide-react';
 import {
   SurveyResponseData,
-  SURVEY_LOCATIONS,
-  S4_OPTIONS,
-  S5_OPTIONS,
-  S6_OPTIONS,
-  S7_OPTIONS,
-  S9_OPTIONS,
-  A1_OPTIONS,
-  A2_OPTIONS,
   OptionItem,
   exportResponsesToCsv,
 } from '../data/surveySchema';
+import { SurveySystemConfig } from '../services/surveyConfig';
 
 interface ResponsesTableProps {
   responses: SurveyResponseData[];
+  config: SurveySystemConfig;
   isSyncing: boolean;
   canExportAll?: boolean;
   canDelete?: boolean;
@@ -36,12 +30,21 @@ interface ResponsesTableProps {
 
 export const ResponsesTable: React.FC<ResponsesTableProps> = ({
   responses,
+  config,
   isSyncing,
   canExportAll = true,
   canDelete = false,
   onSyncOffline,
   onDeleteResponse,
 }) => {
+  const s4Opts = config.questions.S4.options;
+  const s5Opts = config.questions.S5.options;
+  const s6Opts = config.questions.S6.options;
+  const s7Opts = config.questions.S7.options;
+  const s9Opts = config.questions.S9.options;
+  const a1Opts = config.questions.A1.options;
+  const a2Opts = config.questions.A2.options;
+  const a4Opts = config.questions.A4.options;
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'screenout' | 'unsynced'>(
     'all'
@@ -117,8 +120,8 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
             }
             className="px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700"
           >
-            <option value="all">Tất cả 5 điểm</option>
-            {SURVEY_LOCATIONS.map((loc) => (
+            <option value="all">Tất cả điểm khảo sát</option>
+            {config.locations.map((loc) => (
               <option key={loc.id} value={loc.id}>
                 {loc.name}
               </option>
@@ -142,7 +145,17 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
               type="button"
               onClick={() => {
                 if (filteredResponses.length === 0) return;
-                exportResponsesToCsv(filteredResponses);
+                const questionOptionsMap: Record<string, OptionItem[]> = {};
+                Object.entries(config.questions).forEach(([k, v]) => {
+                  questionOptionsMap[k] = v.options;
+                });
+                exportResponsesToCsv(filteredResponses, {
+                  delimiter: config.dataFormat.csvDelimiter,
+                  valueMode: config.dataFormat.csvValueMode,
+                  multiSelectSeparator: config.dataFormat.multiSelectSeparator,
+                  locations: config.locations,
+                  questionOptionsMap,
+                });
               }}
               className="px-3.5 py-1.5 rounded-xl bg-[#d12f2f] hover:bg-[#b82626] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
             >
@@ -176,7 +189,7 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
               <tbody className="divide-y divide-slate-100">
                 {filteredResponses.map((r) => {
                   const locName =
-                    SURVEY_LOCATIONS.find((l) => l.id === r.locationId)?.name ||
+                    config.locations.find((l) => l.id === r.locationId)?.name ||
                     `Điểm ${r.locationId}`;
                   return (
                     <tr key={r.id} className="hover:bg-slate-50/80 transition">
@@ -209,9 +222,9 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
                       <td className="py-2.5 px-3.5 text-slate-700">
                         {r.status === 'completed' ? (
                           <>
-                            <div className="font-medium">{getOptionLabel(S5_OPTIONS, r.S5)}</div>
+                            <div className="font-medium">{getOptionLabel(s5Opts, r.S5)}</div>
                             <div className="text-[11px] text-slate-400">
-                              {getOptionLabel(S7_OPTIONS, r.S7)}
+                              {getOptionLabel(s7Opts, r.S7)}
                             </div>
                           </>
                         ) : (
@@ -222,12 +235,12 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
                       <td className="py-2.5 px-3.5 text-slate-700">
                         {r.status === 'completed' ? (
                           <>
-                            <div>A1: {getOptionLabel(A1_OPTIONS, r.A1)}</div>
+                            <div>A1: {getOptionLabel(a1Opts, r.A1)}</div>
                             <div className="text-emerald-700 font-medium">
                               A4:{' '}
                               {r.A2.includes(7)
                                 ? 'Chưa dùng F&B'
-                                : getOptionLabel(A1_OPTIONS, r.A4)}
+                                : getOptionLabel(a4Opts, r.A4)}
                             </div>
                           </>
                         ) : (
@@ -300,31 +313,31 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
                 <div>
                   <span className="text-slate-400 block">Điểm khảo sát</span>
                   <strong className="text-slate-800">
-                    {SURVEY_LOCATIONS.find((l) => l.id === selectedResponse.locationId)?.name}
+                    {config.locations.find((l) => l.id === selectedResponse.locationId)?.name}
                   </strong>
                 </div>
                 <div>
                   <span className="text-slate-400 block">Độ tuổi (S4)</span>
                   <strong className="text-slate-800">
-                    {getOptionLabel(S4_OPTIONS, selectedResponse.S4)}
+                    {getOptionLabel(s4Opts, selectedResponse.S4)}
                   </strong>
                 </div>
                 <div>
                   <span className="text-slate-400 block">Nguồn khách (S5)</span>
                   <strong className="text-slate-800">
-                    {getOptionLabel(S5_OPTIONS, selectedResponse.S5)}
+                    {getOptionLabel(s5Opts, selectedResponse.S5)}
                   </strong>
                 </div>
                 <div>
                   <span className="text-slate-400 block">Đi cùng (S6)</span>
                   <strong className="text-slate-800">
-                    {getOptionLabel(S6_OPTIONS, selectedResponse.S6)}
+                    {getOptionLabel(s6Opts, selectedResponse.S6)}
                   </strong>
                 </div>
                 <div>
                   <span className="text-slate-400 block">Loại vé (S9)</span>
                   <strong className="text-slate-800">
-                    {getOptionLabel(S9_OPTIONS, selectedResponse.S9)}
+                    {getOptionLabel(s9Opts, selectedResponse.S9)}
                   </strong>
                 </div>
               </div>
@@ -334,19 +347,19 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
                   <div>
                     <span className="text-slate-400">A1 (Dự kiến): </span>
                     <strong className="text-slate-800">
-                      {getOptionLabel(A1_OPTIONS, selectedResponse.A1)}
+                      {getOptionLabel(a1Opts, selectedResponse.A1)}
                     </strong>
                   </div>
                   <div>
                     <span className="text-slate-400">A2 (Đã dùng): </span>
                     <strong className="text-slate-800">
-                      {selectedResponse.A2.map((c) => getOptionLabel(A2_OPTIONS, c)).join('; ')}
+                      {selectedResponse.A2.map((c) => getOptionLabel(a2Opts, c)).join('; ')}
                     </strong>
                   </div>
                   <div>
                     <span className="text-slate-400">A4 (Thực tế): </span>
                     <strong className="text-emerald-700">
-                      {getOptionLabel(A1_OPTIONS, selectedResponse.A4)}
+                      {getOptionLabel(a4Opts, selectedResponse.A4)}
                     </strong>
                   </div>
                   {selectedResponse.C4_note && (
