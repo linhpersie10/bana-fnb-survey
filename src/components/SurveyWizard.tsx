@@ -9,6 +9,7 @@ import {
   Lock,
   RotateCcw,
   Globe,
+  CornerDownRight,
 } from 'lucide-react';
 import {
   SurveyResponseData,
@@ -17,10 +18,18 @@ import {
   B4_ROWS,
   B5_ITEMS,
   OptionItem,
+  getSingleAnswer,
+  getMultiAnswer,
+  getTextAnswer,
+  getOtherInputAnswer,
+  setSingleAnswer,
+  setMultiAnswer,
+  setTextAnswer,
+  setOtherInputAnswer,
 } from '../data/surveySchema';
 import {
   SurveySystemConfig,
-  QuestionKey,
+  QuestionConfigItem,
   ConfigurableOptionItem,
 } from '../services/surveyConfig';
 
@@ -70,9 +79,12 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
   const safeStep = Math.min(Math.max(stepIndex, 0), STEPS.length - 1);
   const activeLocations = config.locations.filter((l) => l.active !== false);
 
-  const getQ = (k: QuestionKey) => config.questions[k];
-  const getVisibleOpts = (k: QuestionKey): ConfigurableOptionItem[] =>
-    (config.questions[k]?.options || []).filter((o) => !o.hidden);
+  const orderedQuestions = config.questionOrder
+    .map((k) => config.questions[k])
+    .filter((q): q is QuestionConfigItem => Boolean(q && !q.hidden));
+
+  const getVisibleOpts = (q: QuestionConfigItem): ConfigurableOptionItem[] =>
+    (q.options || []).filter((o) => !o.hidden);
 
   const formatTimer = (sec: number) => {
     const m = String(Math.floor(sec / 60)).padStart(2, '0');
@@ -80,15 +92,80 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     return `${m}:${s}`;
   };
 
-  // Kiểm tra điều kiện dừng phỏng vấn (Screen-out) động từ cấu hình Phần S
+  // Lấy danh sách mã đáp án đang được chọn của một câu hỏi bất kỳ
+  const getSelectedCodesForQuestion = (q: QuestionConfigItem): number[] => {
+    if (q.type === 'single') {
+      const val = getSingleAnswer(formData, q.key);
+      return val !== null ? [val] : [];
+    }
+    if (q.type === 'multi') {
+      return getMultiAnswer(formData, q.key);
+    }
+    return [];
+  };
+
+  // Tìm các câu hỏi con được kích hoạt khi người trả lời chọn đáp án của câu hỏi cha `parentQ`
+  const getTriggeredSubQuestions = (
+    parentQ: QuestionConfigItem,
+    visited = new Set<string>()
+  ): { childQ: QuestionConfigItem; triggerLabels: string[] }[] => {
+    const selectedCodes = getSelectedCodesForQuestion(parentQ);
+    const results: { childQ: QuestionConfigItem; triggerLabels: string[] }[] = [];
+    const seenChildKeys = new Set<string>();
+
+    // 1. Kiểm tra theo liên kết trực tiếp từ đáp án được chọn (`opt.subQuestionKey`) và `child.parentInfo`
+    orderedQuestions.forEach((candidate) => {
+      if (candidate.key === parentQ.key || visited.has(candidate.key)) return;
+
+      const matchedOpts: ConfigurableOptionItem[] = [];
+
+      parentQ.options.forEach((opt) => {
+        if (!selectedCodes.includes(opt.code)) return;
+        const matchByOpt = opt.subQuestionKey === candidate.key;
+        const matchByParentInfo =
+          candidate.parentInfo?.parentQuestionKey === parentQ.key &&
+          candidate.parentInfo.triggerOptionCodes.includes(opt.code);
+        if (matchByOpt || matchByParentInfo) {
+          matchedOpts.push(opt);
+        }
+      });
+
+      // Logic đặc thù gốc của bộ câu hỏi Ba Na Hills: A4_1 cũng mở ra dưới A4 nếu S9 thuộc nhóm combo/tour (2, 3, 4) và A4 đã trả lời
+      if (
+        parentQ.key === 'A4' &&
+        candidate.key === 'A4_1' &&
+        matchedOpts.length === 0 &&
+        selectedCodes.length > 0 &&
+        (formData.S9 === 2 || formData.S9 === 3 || formData.S9 === 4)
+      ) {
+        results.push({
+          childQ: candidate,
+          triggerLabels: ['Vé Combo / Tour (S9)'],
+        });
+        seenChildKeys.add(candidate.key);
+        return;
+      }
+
+      if (matchedOpts.length > 0 && !seenChildKeys.has(candidate.key)) {
+        seenChildKeys.add(candidate.key);
+        results.push({
+          childQ: candidate,
+          triggerLabels: matchedOpts.map((o) => o.label),
+        });
+      }
+    });
+
+    return results;
+  };
+
+  // Kiểm tra điều kiện dừng phỏng vấn (Screen-out) động trên mọi câu hỏi đang hiển thị
   const detectScreenoutReason = (): string | null => {
-    const sKeys: QuestionKey[] = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9'];
-    for (const k of sKeys) {
-      const val = formData[k] as number | null;
-      if (val !== null) {
-        const matched = config.questions[k]?.options.find((o) => o.code === val);
+    for (const q of orderedQuestions) {
+      const codes = getSelectedCodesForQuestion(q);
+      for (const c of codes) {
+        const matched = q.options.find((o) => o.code === c);
         if (matched?.stopInterview) {
-          return `${k}: ${matched.label}`;
+          return `${q.key}: ${matched.label}`;
         }
       }
     }
@@ -98,12 +175,45 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
   const screenoutReason = detectScreenoutReason();
 
   // Kiểm tra nhánh chưa dùng F&B (A2 chọn đáp án exclusive hoặc mã 7)
-  const a2ExclusiveCodes = getVisibleOpts('A2')
-    .filter((o) => o.exclusive || o.code === 7)
+  const a2Question = config.questions['A2'];
+  const a2ExclusiveCodes = (a2Question?.options || [])
+    .filter((o) => !o.hidden && (o.exclusive || o.code === 7))
     .map((o) => o.code);
-  const isNotUsedFnB = formData.A2.some((c) => a2ExclusiveCodes.includes(c));
+  const a2Selected = getMultiAnswer(formData, 'A2');
+  const isNotUsedFnB = a2Selected.some((c) => a2ExclusiveCodes.includes(c));
 
-  const activeA5Rows = A5_ROWS.filter((r) => formData.A2.includes(r.a2Code));
+  const activeA5Rows = A5_ROWS.filter((r) => a2Selected.includes(r.a2Code));
+
+  // Phân loại câu hỏi chính (không phải câu hỏi con) cho từng bước (Step 0 -> Step 4)
+  const getTopLevelQuestionsForStep = (step: number): QuestionConfigItem[] => {
+    return orderedQuestions.filter((q) => {
+      // Nếu là câu hỏi con của một câu hỏi khác vẫn đang tồn tại -> chỉ hiện bên dưới câu hỏi cha khi chọn đáp án
+      if (
+        q.parentInfo?.parentQuestionKey &&
+        config.questions[q.parentInfo.parentQuestionKey] &&
+        !config.questions[q.parentInfo.parentQuestionKey].hidden
+      ) {
+        return false;
+      }
+
+      if (step === 0) return q.section === 'PHẦN S';
+      if (step === 1) {
+        if (q.section !== 'PHẦN A') return false;
+        return q.branch === 'A1_A2' || q.key === 'A1' || q.key === 'A2';
+      }
+      if (step === 2) {
+        if (q.section !== 'PHẦN A') return false;
+        if (q.branch === 'A1_A2' || q.key === 'A1' || q.key === 'A2') return false;
+        if (isNotUsedFnB) {
+          return q.branch === 'A_NOT_USED' || q.branch === 'ALL' || q.key === 'A3' || q.key === 'A3_4';
+        }
+        return q.branch === 'A_USED' || q.branch === 'ALL' || (!q.branch && q.key !== 'A3' && q.key !== 'A3_4');
+      }
+      if (step === 3) return q.section === 'PHẦN B';
+      if (step === 4) return q.section === 'PHẦN C';
+      return false;
+    });
+  };
 
   const updateField = <K extends keyof SurveyResponseData>(
     key: K,
@@ -114,74 +224,96 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     setFormData((prev) => ({ ...prev, [key]: val }));
   };
 
-  const toggleMultiOption = (
-    key: 'A2' | 'A3' | 'A6' | 'B1' | 'B2' | 'C1' | 'C2' | 'C3',
-    option: OptionItem,
-    maxSelect?: number
-  ) => {
+  const handleSelectSingle = (q: QuestionConfigItem, code: number) => {
     onStartTimer();
     setStepError(null);
+    setFormData((prev) => setSingleAnswer(prev, q.key, code));
+  };
+
+  const handleToggleMulti = (q: QuestionConfigItem, option: OptionItem) => {
+    onStartTimer();
+    setStepError(null);
+    const maxSelect = q.maxSelect || 0;
     setFormData((prev) => {
-      const current = prev[key] as number[];
+      const current = getMultiAnswer(prev, q.key);
       const exists = current.includes(option.code);
 
       if (exists) {
-        return { ...prev, [key]: current.filter((c) => c !== option.code) };
+        return setMultiAnswer(
+          prev,
+          q.key,
+          current.filter((c) => c !== option.code)
+        );
       }
 
       if (option.exclusive) {
-        return { ...prev, [key]: [option.code] };
+        return setMultiAnswer(prev, q.key, [option.code]);
       }
 
-      const allOpts = config.questions[key]?.options || [];
-      const exclusiveCodes = allOpts.filter((o) => o.exclusive).map((o) => o.code);
+      const exclusiveCodes = (q.options || [])
+        .filter((o) => o.exclusive)
+        .map((o) => o.code);
       const cleaned = current.filter((c) => !exclusiveCodes.includes(c));
 
-      if (maxSelect && maxSelect > 0 && cleaned.length >= maxSelect) {
+      if (maxSelect > 0 && cleaned.length >= maxSelect) {
         return prev;
       }
 
-      return { ...prev, [key]: [...cleaned, option.code] };
+      return setMultiAnswer(prev, q.key, [...cleaned, option.code]);
     });
   };
 
+  const handleTextChange = (q: QuestionConfigItem, val: string) => {
+    onStartTimer();
+    setStepError(null);
+    setFormData((prev) => setTextAnswer(prev, q.key, val));
+  };
+
+  const handleOtherInputChange = (qKey: string, val: string) => {
+    onStartTimer();
+    setStepError(null);
+    setFormData((prev) => setOtherInputAnswer(prev, qKey, val));
+  };
+
+  // Kiểm tra câu hỏi đã được trả lời chưa (bao gồm cả câu hỏi con đang mở)
+  const isQuestionAnswered = (q: QuestionConfigItem): boolean => {
+    if (q.required === false) return true;
+    if (q.type === 'single') {
+      return getSingleAnswer(formData, q.key) !== null;
+    }
+    if (q.type === 'multi') {
+      return getMultiAnswer(formData, q.key).length > 0;
+    }
+    if (q.type === 'text') {
+      return getTextAnswer(formData, q.key).trim().length > 0;
+    }
+    return true;
+  };
+
+  const validateQuestionTree = (
+    q: QuestionConfigItem,
+    visited = new Set<string>()
+  ): string | null => {
+    if (visited.has(q.key)) return null;
+    visited.add(q.key);
+
+    if (!isQuestionAnswered(q)) {
+      return `Vui lòng trả lời câu "${q.title}".`;
+    }
+
+    const children = getTriggeredSubQuestions(q, visited);
+    for (const { childQ } of children) {
+      const childErr = validateQuestionTree(childQ, visited);
+      if (childErr) return childErr;
+    }
+    return null;
+  };
+
   const validateCurrentStep = (): string | null => {
-    if (safeStep === 0) {
-      if (!formData.S1 || !formData.S2 || !formData.S3 || !formData.S4) {
-        return 'Vui lòng chọn đủ S1, S2, S3, S4.';
-      }
-      if (!formData.S5 || !formData.S6 || !formData.S7 || !formData.S8 || !formData.S9) {
-        return 'Vui lòng chọn đủ S5 đến S9.';
-      }
-    }
-    if (safeStep === 1) {
-      if (!formData.A1) return 'Vui lòng chọn câu A1 (Chi dự kiến).';
-      if (formData.A2.length === 0) return 'Vui lòng chọn ít nhất 1 mục tại câu A2.';
-    }
-    if (safeStep === 2) {
-      if (isNotUsedFnB) {
-        if (formData.A3.length === 0) return 'Vui lòng chọn lý do chưa dùng F&B (A3).';
-        if (!formData.A3_4) return 'Vui lòng chọn khả năng sử dụng nếu khắc phục (A3.4).';
-      } else {
-        if (!formData.A4) return 'Vui lòng chọn mức chi thực tế (A4).';
-        if (formData.A6.length === 0) return 'Vui lòng chọn yếu tố ảnh hưởng (A6).';
-        if (!formData.A7) return 'Vui lòng chọn nhu cầu chi tiêu thêm (A7).';
-        if ((formData.A7 === 1 || formData.A7 === 2) && !formData.A8) {
-          return 'Vui lòng chọn mức dự kiến chi thêm (A8).';
-        }
-      }
-    }
-    if (safeStep === 3) {
-      if (formData.B1.length === 0) return 'Vui lòng chọn loại ẩm thực yêu thích (B1).';
-      if (formData.B2.length === 0) return 'Vui lòng chọn yêu cầu chế độ ăn (B2).';
-      if (!formData.B3_1 || !formData.B3_2 || !formData.B3_3) {
-        return 'Vui lòng chọn đủ B3.1, B3.2, B3.3.';
-      }
-    }
-    if (safeStep === 4) {
-      if (formData.C1.length === 0) return 'Vui lòng chọn mong muốn cải thiện (C1).';
-      if (formData.C2.length === 0) return 'Vui lòng chọn dịch vụ ăn kèm giải trí (C2).';
-      if (formData.C3.length === 0) return 'Vui lòng chọn sản phẩm mua mang về (C3).';
+    const topQuestions = getTopLevelQuestionsForStep(safeStep);
+    for (const q of topQuestions) {
+      const err = validateQuestionTree(q);
+      if (err) return err;
     }
     return null;
   };
@@ -280,117 +412,174 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     );
   }
 
-  const renderSingleQuestion = (
-    qKey: QuestionKey,
-    currentVal: number | null,
-    onSelect: (code: number) => void,
-    disabled = false
-  ) => {
-    const q = getQ(qKey);
-    const opts = getVisibleOpts(qKey);
+  // Render một câu hỏi bất kỳ (single / multi / text) kèm theo các Câu hỏi con kích hoạt từ đáp án đã chọn
+  const renderQuestionBlock = (
+    q: QuestionConfigItem,
+    visited = new Set<string>(),
+    triggerInfo?: string[]
+  ): React.ReactNode => {
+    if (visited.has(q.key)) return null;
+    const nextVisited = new Set(visited);
+    nextVisited.add(q.key);
+
+    const opts = getVisibleOpts(q);
+    const selectedCodes = getSelectedCodesForQuestion(q);
+    const hasSelectedOtherInput = opts.some(
+      (o) => o.hasOtherInput && selectedCodes.includes(o.code)
+    );
+    const triggeredChildren = getTriggeredSubQuestions(q, nextVisited);
+    const isLockedA1 = q.key === 'A1' && formData.A1_locked;
+
     return (
-      <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
-        <div>
-          <div className="text-sm font-semibold text-slate-900">{q.title}</div>
-          {bilingual && <div className="text-xs text-slate-400 mt-0.5">{q.enTitle}</div>}
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {opts.map((opt) => {
-            const active = currentVal === opt.code;
-            return (
-              <button
-                key={opt.code}
-                type="button"
-                disabled={disabled}
-                onClick={() => onSelect(opt.code)}
-                className={`px-3.5 py-2.5 rounded-xl border text-left transition flex items-start gap-2.5 cursor-pointer disabled:opacity-60 ${
-                  active
-                    ? 'bg-red-50/90 border-[#d12f2f] text-slate-900 shadow-2xs'
-                    : 'bg-slate-50/70 border-slate-200/90 text-slate-700 hover:bg-slate-100/80'
-                }`}
-              >
-                <span
-                  className={`w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5 ${
-                    active
-                      ? 'bg-[#d12f2f] text-white'
-                      : 'bg-white border border-slate-300 text-slate-500'
-                  }`}
-                >
-                  {opt.code}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium leading-snug">{opt.label}</span>
-                  {bilingual && (
-                    <span className="block text-[11px] text-slate-400 leading-tight mt-0.5">
-                      {opt.en}
+      <div key={q.key} className="space-y-2.5">
+        <div
+          className={`bg-white rounded-2xl p-4 border space-y-2.5 ${
+            triggerInfo
+              ? 'border-red-200/90 bg-red-50/15 shadow-2xs'
+              : 'border-slate-200/90'
+          }`}
+        >
+          {triggerInfo && triggerInfo.length > 0 && (
+            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 text-[#d12f2f] border border-red-200/80 text-[11px] font-semibold">
+              <CornerDownRight className="w-3 h-3 shrink-0" />
+              <span className="truncate">
+                Câu hỏi con khi chọn: {triggerInfo.join(', ')}
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">{q.title}</div>
+              {bilingual && <div className="text-xs text-slate-400 mt-0.5">{q.enTitle}</div>}
+            </div>
+            {q.type === 'multi' && (
+              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-semibold shrink-0">
+                {q.maxSelect && q.maxSelect > 0 ? `Tối đa ${q.maxSelect}` : 'Chọn nhiều'}
+              </span>
+            )}
+          </div>
+
+          {q.type === 'text' ? (
+            <input
+              type="text"
+              value={getTextAnswer(formData, q.key)}
+              onChange={(e) => handleTextChange(q, e.target.value)}
+              placeholder={q.placeholder || 'Nhập câu trả lời...'}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-[#d12f2f]"
+            />
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {opts.map((opt) => {
+                const active = selectedCodes.includes(opt.code);
+                return (
+                  <button
+                    key={opt.code}
+                    type="button"
+                    disabled={isLockedA1}
+                    onClick={() =>
+                      q.type === 'single'
+                        ? handleSelectSingle(q, opt.code)
+                        : handleToggleMulti(q, opt)
+                    }
+                    className={`px-3.5 py-2.5 rounded-xl border text-left transition flex items-start gap-2.5 cursor-pointer disabled:opacity-60 ${
+                      active
+                        ? 'bg-red-50/90 border-[#d12f2f] text-slate-900 shadow-2xs'
+                        : 'bg-slate-50/70 border-slate-200/90 text-slate-700 hover:bg-slate-100/80'
+                    }`}
+                  >
+                    <span
+                      className={`w-5 h-5 ${
+                        q.type === 'single' ? 'rounded-full' : 'rounded-md'
+                      } text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5 ${
+                        active
+                          ? 'bg-[#d12f2f] text-white'
+                          : 'bg-white border border-slate-300 text-slate-500'
+                      }`}
+                    >
+                      {opt.code}
                     </span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-medium leading-snug">
+                        {opt.label}
+                      </span>
+                      {bilingual && (
+                        <span className="block text-[11px] text-slate-400 leading-tight mt-0.5">
+                          {opt.en}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Ô nhập "Khác (ghi rõ)" nếu đáp án đang chọn có bật cờ hasOtherInput */}
+          {hasSelectedOtherInput && (
+            <input
+              type="text"
+              value={getOtherInputAnswer(formData, q.key)}
+              onChange={(e) => handleOtherInputChange(q.key, e.target.value)}
+              placeholder={`Ghi rõ nội dung khác cho câu ${q.key}...`}
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:outline-none focus:border-[#d12f2f]"
+            />
+          )}
         </div>
+
+        {/* Hiển thị các Câu hỏi con (nếu có đáp án kích hoạt được chọn) */}
+        {triggeredChildren.length > 0 && (
+          <div className="ml-3 sm:ml-5 pl-3 border-l-2 border-[#d12f2f]/40 space-y-2.5">
+            {triggeredChildren.map(({ childQ, triggerLabels }) =>
+              renderQuestionBlock(childQ, nextVisited, triggerLabels)
+            )}
+          </div>
+        )}
+
+        {/* Ma trận A5 hiển thị ngay sau câu A4 / A4_1 nếu ở Bước 2 nhánh Đã dùng F&B */}
+        {q.key === 'A4' && !isNotUsedFnB && activeA5Rows.length > 0 && (
+          <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-3">
+            <div className="text-sm font-semibold text-slate-900">
+              A5. Mức chi theo từng loại hình đã dùng (1 người)
+            </div>
+            <div className="space-y-2.5">
+              {activeA5Rows.map((row) => (
+                <div
+                  key={row.key}
+                  className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5"
+                >
+                  <div className="text-xs font-semibold text-slate-800">{row.label}</div>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                    {A5_COLUMNS.map((col) => {
+                      const active = formData.A5[row.key] === col.code;
+                      return (
+                        <button
+                          key={col.code}
+                          type="button"
+                          onClick={() =>
+                            updateField('A5', { ...formData.A5, [row.key]: col.code })
+                          }
+                          className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold border transition cursor-pointer ${
+                            active
+                              ? 'bg-[#d12f2f] text-white border-[#d12f2f]'
+                              : 'bg-white text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          {col.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   };
 
-  const renderMultiQuestion = (
-    qKey: 'A2' | 'A3' | 'A6' | 'B1' | 'B2' | 'C1' | 'C2' | 'C3',
-    selectedCodes: number[]
-  ) => {
-    const q = getQ(qKey);
-    const opts = getVisibleOpts(qKey);
-    const maxSel = q.maxSelect || 0;
-    const badge = maxSel > 0 ? `Tối đa ${maxSel}` : 'Chọn nhiều';
-    return (
-      <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <div className="text-sm font-semibold text-slate-900">{q.title}</div>
-            {bilingual && <div className="text-xs text-slate-400 mt-0.5">{q.enTitle}</div>}
-          </div>
-          <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-semibold shrink-0">
-            {badge}
-          </span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {opts.map((opt) => {
-            const active = selectedCodes.includes(opt.code);
-            return (
-              <button
-                key={opt.code}
-                type="button"
-                onClick={() => toggleMultiOption(qKey, opt, maxSel)}
-                className={`px-3.5 py-2.5 rounded-xl border text-left transition flex items-start gap-2.5 cursor-pointer ${
-                  active
-                    ? 'bg-red-50/90 border-[#d12f2f] text-slate-900 shadow-2xs'
-                    : 'bg-slate-50/70 border-slate-200/90 text-slate-700 hover:bg-slate-100/80'
-                }`}
-              >
-                <span
-                  className={`w-5 h-5 rounded-md text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5 ${
-                    active
-                      ? 'bg-[#d12f2f] text-white'
-                      : 'bg-white border border-slate-300 text-slate-500'
-                  }`}
-                >
-                  {opt.code}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium leading-snug">{opt.label}</span>
-                  {bilingual && (
-                    <span className="block text-[11px] text-slate-400 leading-tight mt-0.5">
-                      {opt.en}
-                    </span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
+  const stepQuestions = getTopLevelQuestionsForStep(safeStep);
 
   return (
     <div className="space-y-3.5 pb-16">
@@ -488,170 +677,30 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         </div>
       )}
 
-      {/* ==================== BƯỚC 0: PHẦN S ==================== */}
-      {safeStep === 0 && (
-        <div className="space-y-3">
-          {renderSingleQuestion('S1', formData.S1, (c) => updateField('S1', c))}
-          {renderSingleQuestion('S2', formData.S2, (c) => updateField('S2', c))}
-          {renderSingleQuestion('S3', formData.S3, (c) => updateField('S3', c))}
-          {renderSingleQuestion('S4', formData.S4, (c) => updateField('S4', c))}
-          {renderSingleQuestion('S5', formData.S5, (c) => updateField('S5', c))}
-          {formData.S5 === 10 && (
-            <input
-              type="text"
-              value={formData.S5_other}
-              onChange={(e) => updateField('S5_other', e.target.value)}
-              placeholder="Ghi rõ quốc tịch khác..."
-              className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-sm"
-            />
-          )}
-          {renderSingleQuestion('S6', formData.S6, (c) => updateField('S6', c))}
-          {renderSingleQuestion('S7', formData.S7, (c) => updateField('S7', c))}
-          {renderSingleQuestion('S8', formData.S8, (c) => updateField('S8', c))}
-          {renderSingleQuestion('S9', formData.S9, (c) => updateField('S9', c))}
+      {safeStep === 1 && formData.A1_locked && (
+        <div className="px-3.5 py-2 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between text-xs text-slate-600">
+          <span className="inline-flex items-center gap-1.5 font-medium">
+            <Lock className="w-3.5 h-3.5 text-slate-500" />
+            Câu A1 đã khóa để giữ phản xạ ngân sách đầu tiên
+          </span>
+          <button
+            type="button"
+            onClick={() => updateField('A1_locked', false)}
+            className="text-[#d12f2f] font-semibold underline cursor-pointer"
+          >
+            Mở khóa sửa
+          </button>
         </div>
       )}
 
-      {/* ==================== BƯỚC 1: PHẦN A1–A2 ==================== */}
-      {safeStep === 1 && (
-        <div className="space-y-3">
-          {formData.A1_locked && (
-            <div className="px-3.5 py-2 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between text-xs text-slate-600">
-              <span className="inline-flex items-center gap-1.5 font-medium">
-                <Lock className="w-3.5 h-3.5 text-slate-500" />
-                Câu A1 đã khóa để giữ phản xạ ngân sách đầu tiên
-              </span>
-              <button
-                type="button"
-                onClick={() => updateField('A1_locked', false)}
-                className="text-[#d12f2f] font-semibold underline cursor-pointer"
-              >
-                Mở khóa sửa
-              </button>
-            </div>
-          )}
+      {/* Danh sách câu hỏi chính + câu hỏi con tự động bung theo đáp án */}
+      <div className="space-y-3">
+        {stepQuestions.map((q) => renderQuestionBlock(q))}
+      </div>
 
-          {renderSingleQuestion(
-            'A1',
-            formData.A1,
-            (c) => updateField('A1', c),
-            formData.A1_locked
-          )}
-          {renderMultiQuestion('A2', formData.A2)}
-        </div>
-      )}
-
-      {/* ==================== BƯỚC 2: PHẦN A3 HOẶC A4–A8 ==================== */}
-      {safeStep === 2 && (
-        <div className="space-y-3">
-          {isNotUsedFnB ? (
-            <>
-              {renderMultiQuestion('A3', formData.A3)}
-
-              {formData.A3.includes(1) && (
-                <input
-                  type="text"
-                  value={formData.A3_1}
-                  onChange={(e) => updateField('A3_1', e.target.value)}
-                  placeholder="A3.1. Anh/Chị đã ăn ở đâu trước khi lên Bà Nà?"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-sm"
-                />
-              )}
-
-              {formData.A3.includes(3) && (
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={formData.A3_2}
-                  onChange={(e) => updateField('A3_2', e.target.value)}
-                  placeholder="A3.2. Mức giá hợp lý sẵn sàng chi (VNĐ/người)?"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-sm"
-                />
-              )}
-
-              {(formData.A3.includes(4) ||
-                formData.A3.includes(5) ||
-                formData.A3.includes(6) ||
-                formData.A3.includes(7)) && (
-                <input
-                  type="text"
-                  value={formData.A3_3}
-                  onChange={(e) => updateField('A3_3', e.target.value)}
-                  placeholder="A3.3. Món ăn hoặc dịch vụ mong muốn có thêm?"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-sm"
-                />
-              )}
-
-              {renderSingleQuestion('A3_4', formData.A3_4, (c) => updateField('A3_4', c))}
-            </>
-          ) : (
-            <>
-              {renderSingleQuestion('A4', formData.A4, (c) => updateField('A4', c))}
-
-              {(formData.A4 === 8 ||
-                formData.S9 === 2 ||
-                formData.S9 === 3 ||
-                formData.S9 === 4) &&
-                renderSingleQuestion('A4_1', formData.A4_1, (c) => updateField('A4_1', c))}
-
-              {activeA5Rows.length > 0 && (
-                <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-3">
-                  <div className="text-sm font-semibold text-slate-900">
-                    A5. Mức chi theo từng loại hình đã dùng (1 người)
-                  </div>
-                  <div className="space-y-2.5">
-                    {activeA5Rows.map((row) => (
-                      <div
-                        key={row.key}
-                        className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5"
-                      >
-                        <div className="text-xs font-semibold text-slate-800">{row.label}</div>
-                        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
-                          {A5_COLUMNS.map((col) => {
-                            const active = formData.A5[row.key] === col.code;
-                            return (
-                              <button
-                                key={col.code}
-                                type="button"
-                                onClick={() =>
-                                  updateField('A5', { ...formData.A5, [row.key]: col.code })
-                                }
-                                className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold border transition cursor-pointer ${
-                                  active
-                                    ? 'bg-[#d12f2f] text-white border-[#d12f2f]'
-                                    : 'bg-white text-slate-600 border-slate-200'
-                                }`}
-                              >
-                                {col.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {renderMultiQuestion('A6', formData.A6)}
-              {renderSingleQuestion('A7', formData.A7, (c) => updateField('A7', c))}
-
-              {(formData.A7 === 1 || formData.A7 === 2) &&
-                renderSingleQuestion('A8', formData.A8, (c) => updateField('A8', c))}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ==================== BƯỚC 3: PHẦN B ==================== */}
+      {/* Bảng B4 & B5 ở Bước 3 (PHẦN B) */}
       {safeStep === 3 && (
         <div className="space-y-3">
-          {renderMultiQuestion('B1', formData.B1)}
-          {renderMultiQuestion('B2', formData.B2)}
-          {renderSingleQuestion('B3_1', formData.B3_1, (c) => updateField('B3_1', c))}
-          {renderSingleQuestion('B3_2', formData.B3_2, (c) => updateField('B3_2', c))}
-          {renderSingleQuestion('B3_3', formData.B3_3, (c) => updateField('B3_3', c))}
-
           <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
             <div className="text-sm font-semibold text-slate-900">
               B4. Cảm nhận mức giá hiện tại (1: Đắt • 2: Hợp lý • 3: Rẻ)
@@ -734,36 +783,30 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         </div>
       )}
 
-      {/* ==================== BƯỚC 4: PHẦN C ==================== */}
+      {/* Ghi chú mở & Chọn quà tặng ở Bước 4 (PHẦN C) */}
       {safeStep === 4 && (
-        <div className="space-y-3">
-          {renderMultiQuestion('C1', formData.C1)}
-          {renderMultiQuestion('C2', formData.C2)}
-          {renderMultiQuestion('C3', formData.C3)}
-
-          <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
-            <label className="block text-sm font-semibold text-slate-900">
-              Ghi chú ý kiến mở &amp; Chọn quà tặng
-            </label>
-            <input
-              type="text"
-              value={formData.C4_note}
-              onChange={(e) => updateField('C4_note', e.target.value)}
-              placeholder="Ghi ngắn gọn ý kiến thêm của du khách (nếu có)..."
-              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm"
-            />
-            <select
-              value={formData.giftName}
-              onChange={(e) => updateField('giftName', e.target.value)}
-              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700"
-            >
-              {config.giftPresets.map((g) => (
-                <option key={g} value={g}>
-                  Quà tặng: {g}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
+          <label className="block text-sm font-semibold text-slate-900">
+            Ghi chú ý kiến mở &amp; Chọn quà tặng
+          </label>
+          <input
+            type="text"
+            value={formData.C4_note}
+            onChange={(e) => updateField('C4_note', e.target.value)}
+            placeholder="Ghi ngắn gọn ý kiến thêm của du khách (nếu có)..."
+            className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm"
+          />
+          <select
+            value={formData.giftName}
+            onChange={(e) => updateField('giftName', e.target.value)}
+            className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700"
+          >
+            {config.giftPresets.map((g) => (
+              <option key={g} value={g}>
+                Quà tặng: {g}
+              </option>
+            ))}
+          </select>
         </div>
       )}
 

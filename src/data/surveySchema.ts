@@ -483,6 +483,156 @@ export interface SurveyResponseData {
   C3: number[];
   C3_other: string;
   C4_note: string;
+
+  // Dữ liệu cho các câu hỏi mở rộng / câu hỏi con do Admin thêm mới
+  customAnswers?: Record<string, number | number[] | string | null>;
+  otherInputs?: Record<string, string>;
+}
+
+const BUILTIN_SINGLE_KEYS = new Set([
+  'S1',
+  'S2',
+  'S3',
+  'S4',
+  'S5',
+  'S6',
+  'S7',
+  'S8',
+  'S9',
+  'A1',
+  'A3_4',
+  'A4',
+  'A4_1',
+  'A7',
+  'A8',
+  'B3_1',
+  'B3_2',
+  'B3_3',
+]);
+
+const BUILTIN_MULTI_KEYS = new Set(['A2', 'A3', 'A6', 'B1', 'B2', 'C1', 'C2', 'C3']);
+
+const BUILTIN_TEXT_KEYS = new Set([
+  'S5_other',
+  'A3_other',
+  'A3_1',
+  'A3_2',
+  'A3_3',
+  'A6_other',
+  'B1_other',
+  'C2_other',
+  'C3_other',
+  'C4_note',
+]);
+
+export function getSingleAnswer(data: SurveyResponseData, qKey: string): number | null {
+  if (BUILTIN_SINGLE_KEYS.has(qKey)) {
+    const val = (data as unknown as Record<string, unknown>)[qKey];
+    return typeof val === 'number' ? val : null;
+  }
+  const cVal = data.customAnswers?.[qKey];
+  return typeof cVal === 'number' ? cVal : null;
+}
+
+export function getMultiAnswer(data: SurveyResponseData, qKey: string): number[] {
+  if (BUILTIN_MULTI_KEYS.has(qKey)) {
+    const val = (data as unknown as Record<string, unknown>)[qKey];
+    return Array.isArray(val) ? (val as number[]) : [];
+  }
+  const cVal = data.customAnswers?.[qKey];
+  return Array.isArray(cVal) ? (cVal as number[]) : [];
+}
+
+export function getTextAnswer(data: SurveyResponseData, qKey: string): string {
+  if (BUILTIN_TEXT_KEYS.has(qKey)) {
+    const val = (data as unknown as Record<string, unknown>)[qKey];
+    return typeof val === 'string' ? val : '';
+  }
+  const cVal = data.customAnswers?.[qKey];
+  return typeof cVal === 'string' ? cVal : '';
+}
+
+export function getOtherInputAnswer(data: SurveyResponseData, qKey: string): string {
+  const legacyKey = `${qKey}_other`;
+  if (BUILTIN_TEXT_KEYS.has(legacyKey)) {
+    const val = (data as unknown as Record<string, unknown>)[legacyKey];
+    if (typeof val === 'string' && val) return val;
+  }
+  return data.otherInputs?.[qKey] || '';
+}
+
+export function setSingleAnswer(
+  prev: SurveyResponseData,
+  qKey: string,
+  val: number | null
+): SurveyResponseData {
+  if (BUILTIN_SINGLE_KEYS.has(qKey)) {
+    return { ...prev, [qKey]: val };
+  }
+  return {
+    ...prev,
+    customAnswers: {
+      ...(prev.customAnswers || {}),
+      [qKey]: val,
+    },
+  };
+}
+
+export function setMultiAnswer(
+  prev: SurveyResponseData,
+  qKey: string,
+  val: number[]
+): SurveyResponseData {
+  if (BUILTIN_MULTI_KEYS.has(qKey)) {
+    return { ...prev, [qKey]: val };
+  }
+  return {
+    ...prev,
+    customAnswers: {
+      ...(prev.customAnswers || {}),
+      [qKey]: val,
+    },
+  };
+}
+
+export function setTextAnswer(
+  prev: SurveyResponseData,
+  qKey: string,
+  val: string
+): SurveyResponseData {
+  if (BUILTIN_TEXT_KEYS.has(qKey)) {
+    return { ...prev, [qKey]: val };
+  }
+  return {
+    ...prev,
+    customAnswers: {
+      ...(prev.customAnswers || {}),
+      [qKey]: val,
+    },
+  };
+}
+
+export function setOtherInputAnswer(
+  prev: SurveyResponseData,
+  qKey: string,
+  val: string
+): SurveyResponseData {
+  const legacyKey = `${qKey}_other`;
+  const nextOtherInputs = {
+    ...(prev.otherInputs || {}),
+    [qKey]: val,
+  };
+  if (BUILTIN_TEXT_KEYS.has(legacyKey)) {
+    return {
+      ...prev,
+      [legacyKey]: val,
+      otherInputs: nextOtherInputs,
+    };
+  }
+  return {
+    ...prev,
+    otherInputs: nextOtherInputs,
+  };
 }
 
 export function createEmptySurveyResponse(
@@ -586,7 +736,16 @@ export function createEmptySurveyResponse(
     C3: [],
     C3_other: '',
     C4_note: '',
+    customAnswers: {},
+    otherInputs: {},
   };
+}
+
+export interface CustomQuestionCsvMeta {
+  key: string;
+  title: string;
+  type: 'single' | 'multi' | 'text';
+  options: OptionItem[];
 }
 
 export interface CsvExportOptions {
@@ -595,6 +754,7 @@ export interface CsvExportOptions {
   multiSelectSeparator?: string;
   locations?: SurveyLocation[];
   questionOptionsMap?: Record<string, OptionItem[]>;
+  customQuestions?: CustomQuestionCsvMeta[];
 }
 
 export function exportResponsesToCsv(
@@ -696,6 +856,7 @@ export function exportResponsesToCsv(
     'C3_DeXuatCaiThien',
     'C3_Khac',
     'C4_GhiChuMo',
+    ...(opts?.customQuestions || []).map((cq) => `${cq.key}_${cq.title.slice(0, 24).replace(/\s+/g, '_')}`),
   ];
 
   const escapeCsv = (val: unknown): string => {
@@ -717,6 +878,18 @@ export function exportResponsesToCsv(
         : valueMode === 'label_only'
         ? locObj?.name || r.locationId
         : `${r.locationId} - ${locObj?.name || ''}`;
+
+    const customCols = (opts?.customQuestions || []).map((cq) => {
+      if (cq.type === 'single') {
+        const val = getSingleAnswer(r, cq.key);
+        return formatSingle(cq.key, val, cq.options);
+      }
+      if (cq.type === 'multi') {
+        const val = getMultiAnswer(r, cq.key);
+        return formatMulti(cq.key, val, cq.options);
+      }
+      return getTextAnswer(r, cq.key);
+    });
 
     return [
       r.id,
@@ -785,6 +958,7 @@ export function exportResponsesToCsv(
       formatMulti('C3', r.C3, C3_OPTIONS),
       r.C3_other,
       r.C4_note,
+      ...customCols,
     ]
       .map(escapeCsv)
       .join(delimiter);

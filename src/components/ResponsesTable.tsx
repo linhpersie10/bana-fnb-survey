@@ -14,9 +14,18 @@ import {
 import {
   SurveyResponseData,
   OptionItem,
+  S4_OPTIONS,
+  S5_OPTIONS,
+  S6_OPTIONS,
+  S7_OPTIONS,
+  S9_OPTIONS,
+  A1_OPTIONS,
+  A2_OPTIONS,
+  A4_OPTIONS,
+  CustomQuestionCsvMeta,
   exportResponsesToCsv,
 } from '../data/surveySchema';
-import { SurveySystemConfig } from '../services/surveyConfig';
+import { SurveySystemConfig, DEFAULT_QUESTION_ORDER } from '../services/surveyConfig';
 
 interface ResponsesTableProps {
   responses: SurveyResponseData[];
@@ -37,14 +46,14 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
   onSyncOffline,
   onDeleteResponse,
 }) => {
-  const s4Opts = config.questions.S4.options;
-  const s5Opts = config.questions.S5.options;
-  const s6Opts = config.questions.S6.options;
-  const s7Opts = config.questions.S7.options;
-  const s9Opts = config.questions.S9.options;
-  const a1Opts = config.questions.A1.options;
-  const a2Opts = config.questions.A2.options;
-  const a4Opts = config.questions.A4.options;
+  const s4Opts = config.questions.S4?.options || S4_OPTIONS;
+  const s5Opts = config.questions.S5?.options || S5_OPTIONS;
+  const s6Opts = config.questions.S6?.options || S6_OPTIONS;
+  const s7Opts = config.questions.S7?.options || S7_OPTIONS;
+  const s9Opts = config.questions.S9?.options || S9_OPTIONS;
+  const a1Opts = config.questions.A1?.options || A1_OPTIONS;
+  const a2Opts = config.questions.A2?.options || A2_OPTIONS;
+  const a4Opts = config.questions.A4?.options || A4_OPTIONS;
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'screenout' | 'unsynced'>(
     'all'
@@ -149,12 +158,21 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
                 Object.entries(config.questions).forEach(([k, v]) => {
                   questionOptionsMap[k] = v.options;
                 });
+                const customQuestions: CustomQuestionCsvMeta[] = config.questionOrder
+                  .filter((k) => !DEFAULT_QUESTION_ORDER.includes(k) && config.questions[k])
+                  .map((k) => ({
+                    key: k,
+                    title: config.questions[k].title,
+                    type: config.questions[k].type,
+                    options: config.questions[k].options,
+                  }));
                 exportResponsesToCsv(filteredResponses, {
                   delimiter: config.dataFormat.csvDelimiter,
                   valueMode: config.dataFormat.csvValueMode,
                   multiSelectSeparator: config.dataFormat.multiSelectSeparator,
                   locations: config.locations,
                   questionOptionsMap,
+                  customQuestions,
                 });
               }}
               className="px-3.5 py-1.5 rounded-xl bg-[#d12f2f] hover:bg-[#b82626] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
@@ -368,6 +386,26 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
                       <strong className="text-slate-800">{selectedResponse.C4_note}</strong>
                     </div>
                   )}
+                  {selectedResponse.customAnswers &&
+                    Object.entries(selectedResponse.customAnswers).map(([k, val]) => {
+                      if (val === null || val === undefined || val === '') return null;
+                      const qMeta = config.questions[k];
+                      const displayVal = Array.isArray(val)
+                        ? val
+                            .map((c) => getOptionLabel(qMeta?.options || [], c))
+                            .join('; ')
+                        : typeof val === 'number' && qMeta?.type !== 'text'
+                        ? getOptionLabel(qMeta?.options || [], val)
+                        : String(val);
+                      return (
+                        <div key={k}>
+                          <span className="text-slate-400">
+                            {qMeta?.title || k}:{' '}
+                          </span>
+                          <strong className="text-slate-800">{displayVal}</strong>
+                        </div>
+                      );
+                    })}
                 </div>
               )}
             </div>
