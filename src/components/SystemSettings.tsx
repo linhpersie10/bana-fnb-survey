@@ -16,6 +16,8 @@ import {
   ArrowDown,
   GitBranch,
   MessageSquareText,
+  ExternalLink,
+  X,
 } from 'lucide-react';
 import {
   SurveySystemConfig,
@@ -34,7 +36,7 @@ interface SystemSettingsProps {
   onConfigSaved: (next: SurveySystemConfig) => void;
 }
 
-type SettingsSubTab = 'locations' | 'questions' | 'format';
+type SettingsSubTab = 'questions' | 'locations' | 'format';
 
 const SECTIONS: SurveySection[] = ['PHẦN S', 'PHẦN A', 'PHẦN B', 'PHẦN C'];
 
@@ -49,11 +51,14 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
   const [selectedQKey, setSelectedQKey] = useState<string>(
     config.questionOrder[0] || 'S1'
   );
+  const [expandedOptCode, setExpandedOptCode] = useState<number | null>(null);
+  const [showParentConfigBox, setShowParentConfigBox] = useState(false);
+
   const [newGiftInput, setNewGiftInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
 
-  // Modal / Form tạo câu hỏi mới
+  // Modal tạo câu hỏi mới / câu hỏi con
   const [showAddQModal, setShowAddQModal] = useState(false);
   const [newQKey, setNewQKey] = useState('');
   const [newQSection, setNewQSection] = useState<SurveySection>('PHẦN S');
@@ -98,7 +103,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
     }
   };
 
-  // ==================== XỬ LÝ VỊ TRÍ KHẢO SÁT ====================
+  // ==================== XỬ LÝ VỊ TRÍ KHẢO SÁT & QUÀ TẶNG ====================
   const updateLocation = (
     idx: number,
     patch: Partial<SurveySystemConfig['locations'][number]>
@@ -139,7 +144,6 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
     }));
   };
 
-  // ==================== XỬ LÝ QUÀ TẶNG ====================
   const addGiftPreset = () => {
     const clean = newGiftInput.trim();
     if (!clean) return;
@@ -169,6 +173,8 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
 
   const activeQ: QuestionConfigItem | undefined =
     draft.questions[selectedQKey] || draft.questions[orderedKeys[0]];
+
+  const hasParentLink = Boolean(activeQ?.parentInfo?.parentQuestionKey);
 
   const suggestNextQuestionKey = (sec: SurveySection, parentKey?: string, optCode?: number) => {
     if (parentKey && optCode !== undefined) {
@@ -203,7 +209,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
     );
     setNewQKey(suggestedKey);
     setNewQType('single');
-    setNewQTitle(`${suggestedKey}. Câu hỏi mới`);
+    setNewQTitle(`${suggestedKey}. Nội dung câu hỏi mới`);
     setNewQEnTitle('New question');
     setNewQParentKey(presetParentKey || '');
     setNewQTriggerCodes(presetOptCode !== undefined ? [presetOptCode] : []);
@@ -254,14 +260,13 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         newQType === 'text'
           ? []
           : [
-              { code: 1, label: 'Đáp án 1', en: 'Option 1' },
-              { code: 2, label: 'Đáp án 2', en: 'Option 2' },
+              { code: 1, label: 'Lựa chọn 1', en: 'Option 1' },
+              { code: 2, label: 'Lựa chọn 2', en: 'Option 2' },
             ],
     };
 
     applyDraftWithSync((prev) => {
       const nextQuestions = { ...prev.questions, [cleanKey]: createdItem };
-      // Nếu có chọn câu hỏi cha và mã đáp án kích hoạt -> gắn subQuestionKey vào đáp án của câu cha
       if (newQParentKey && nextQuestions[newQParentKey] && newQTriggerCodes.length > 0) {
         const parentQ = nextQuestions[newQParentKey];
         nextQuestions[newQParentKey] = {
@@ -274,7 +279,6 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         };
       }
 
-      // Chèn câu hỏi mới ngay sau câu hỏi cha (nếu có) hoặc cuối danh sách
       const nextOrder = [...prev.questionOrder];
       if (newQParentKey) {
         const parentIdx = nextOrder.indexOf(newQParentKey);
@@ -297,6 +301,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
     });
 
     setSelectedQKey(cleanKey);
+    setExpandedOptCode(null);
     setShowAddQModal(false);
   };
 
@@ -307,11 +312,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
     }
     const q = draft.questions[qKey];
     if (!q) return;
-    if (
-      !window.confirm(
-        `Xóa câu hỏi "${q.title}" (${qKey}) khỏi bộ phiếu khảo sát?`
-      )
-    ) {
+    if (!window.confirm(`Xóa câu hỏi "${q.title}" (${qKey})?`)) {
       return;
     }
 
@@ -323,7 +324,6 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
       const nextQuestions = { ...prev.questions };
       delete nextQuestions[qKey];
 
-      // Gỡ các liên kết subQuestionKey hoặc parentInfo trỏ tới câu hỏi vừa xóa
       Object.keys(nextQuestions).forEach((k) => {
         const item = nextQuestions[k];
         nextQuestions[k] = {
@@ -376,14 +376,13 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         ...current,
         ...patch,
       };
-      // Nếu đổi từ text sang single/multi mà chưa có đáp án nào -> tạo 2 đáp án mẫu
       if (
         (updated.type === 'single' || updated.type === 'multi') &&
         updated.options.length === 0
       ) {
         updated.options = [
-          { code: 1, label: 'Đáp án 1', en: 'Option 1' },
-          { code: 2, label: 'Đáp án 2', en: 'Option 2' },
+          { code: 1, label: 'Lựa chọn 1', en: 'Option 1' },
+          { code: 2, label: 'Lựa chọn 2', en: 'Option 2' },
         ];
       }
       return {
@@ -396,14 +395,12 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
     });
   };
 
-  // Cập nhật liên kết Câu hỏi con từ phía Câu hỏi con (chọn câu cha + các mã đáp án kích hoạt)
   const setChildParentLink = (parentKey: string | null, triggerCodes: number[]) => {
     if (!activeQ) return;
     const childKey = activeQ.key;
     applyDraftWithSync((prev) => {
       const nextQuestions = { ...prev.questions };
 
-      // 1. Xóa toàn bộ subQuestionKey === childKey trên mọi câu hỏi trước
       Object.keys(nextQuestions).forEach((k) => {
         nextQuestions[k] = {
           ...nextQuestions[k],
@@ -413,7 +410,6 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         };
       });
 
-      // 2. Nếu có chọn câu cha & đáp án kích hoạt -> gán vào câu cha và parentInfo của câu con
       if (parentKey && nextQuestions[parentKey] && parentKey !== childKey) {
         const codesToSet =
           triggerCodes.length > 0
@@ -486,8 +482,8 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
               ...q.options,
               {
                 code: nextCode,
-                label: `Đáp án mới (${nextCode})`,
-                en: `New option (${nextCode})`,
+                label: `Lựa chọn ${nextCode}`,
+                en: `Option ${nextCode}`,
                 hidden: false,
               },
             ],
@@ -537,7 +533,6 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
     await handleSaveAll(def);
   };
 
-  // Danh sách các câu hỏi có thể đóng vai trò Câu hỏi cha (có đáp án để chọn)
   const parentCandidates = orderedKeys
     .map((k) => draft.questions[k])
     .filter(
@@ -548,48 +543,54 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         q.options.length > 0
     );
 
+  // Rút gọn tiêu đề hiển thị ở cột trái (bỏ phần lặp lại mã câu nếu có)
+  const cleanShortTitle = (q: QuestionConfigItem) => {
+    const prefixRegex = new RegExp(`^${q.key.replace('_', '\\.')}\\.?\\s*`, 'i');
+    return q.title.replace(prefixRegex, '');
+  };
+
   return (
     <div className="space-y-4 pb-16">
-      {/* Top Sub-Navigation & Save Button */}
-      <div className="bg-white rounded-2xl p-3 border border-slate-200 flex flex-wrap items-center justify-between gap-2.5">
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+      {/* Thanh điều hướng phụ & Nút Lưu Cloud */}
+      <div className="bg-white rounded-2xl px-4 py-2.5 border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
           <button
             type="button"
             onClick={() => setSubTab('questions')}
-            className={`px-3 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
               subTab === 'questions'
-                ? 'bg-slate-900 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                ? 'bg-white text-slate-900 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <ListChecks className="w-3.5 h-3.5" />
-            Câu hỏi, Đáp án &amp; Câu hỏi con ({orderedKeys.length})
+            <ListChecks className="w-3.5 h-3.5 text-[#d12f2f]" />
+            Bộ câu hỏi &amp; Rẽ nhánh ({orderedKeys.length})
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('locations')}
-            className={`px-3 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
               subTab === 'locations'
-                ? 'bg-slate-900 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                ? 'bg-white text-slate-900 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <MapPin className="w-3.5 h-3.5" />
-            Vị trí &amp; Quà tặng ({draft.locations.length})
+            <MapPin className="w-3.5 h-3.5 text-[#d12f2f]" />
+            Điểm khảo sát &amp; Quà tặng ({draft.locations.length})
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('format')}
-            className={`px-3 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer ${
               subTab === 'format'
-                ? 'bg-slate-900 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                ? 'bg-white text-slate-900 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            Định dạng dữ liệu &amp; Quota
+            <FileSpreadsheet className="w-3.5 h-3.5 text-[#d12f2f]" />
+            Định dạng CSV &amp; Quota
           </button>
         </div>
 
@@ -597,69 +598,70 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
           <button
             type="button"
             onClick={() => void resetEntireConfigToDefault()}
-            className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
-            title="Khôi phục mặc định"
+            className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            Mặc định
+            Khôi phục mặc định
           </button>
 
           <button
             type="button"
             disabled={saving}
             onClick={() => void handleSaveAll()}
-            className="px-4 py-2 rounded-xl bg-[#d12f2f] hover:bg-[#b82626] text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+            className="px-4 py-1.5 rounded-xl bg-[#d12f2f] hover:bg-[#b82626] text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
           >
-            {savedToast ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            {savedToast ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
             <span>
-              {saving ? 'Đang lưu...' : savedToast ? 'Đã lưu Cloud!' : 'Lưu cấu hình'}
+              {saving ? 'Đang đồng bộ...' : savedToast ? 'Đã lưu lên Cloud!' : 'Lưu cấu hình'}
             </span>
           </button>
         </div>
       </div>
 
-      {/* ==================== TAB: QUẢN LÝ CÂU HỎI, CÂU TRẢ LỜI & CÂU HỎI CON ==================== */}
+      {/* ==================== TAB 1: BỘ CÂU HỎI & RẼ NHÁNH ==================== */}
       {subTab === 'questions' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Cột trái: Danh sách câu hỏi + Thêm câu hỏi mới */}
-          <div className="lg:col-span-4 bg-white rounded-2xl p-3 border border-slate-200 flex flex-col gap-2.5 max-h-[78vh]">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-slate-700">
-                Danh sách câu hỏi ({filteredKeys.length})
-              </span>
-              <button
-                type="button"
-                onClick={() => openAddQuestionModal()}
-                className="px-2.5 py-1.5 rounded-xl bg-[#d12f2f] hover:bg-[#b82626] text-white text-xs font-semibold inline-flex items-center gap-1 shadow-2xs cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Thêm câu hỏi
-              </button>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+          {/* CỘT TRÁI (4/12): Cây danh sách câu hỏi */}
+          <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden flex flex-col max-h-[80vh]">
+            <div className="p-3 border-b border-slate-100 space-y-2.5 bg-slate-50/50">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-slate-800">
+                  Danh mục câu hỏi ({filteredKeys.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => openAddQuestionModal()}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Thêm câu hỏi
+                </button>
+              </div>
+
+              {/* Tab lọc nhanh theo Phần */}
+              <div className="grid grid-cols-5 gap-1 bg-slate-200/70 p-0.5 rounded-lg">
+                {(['ALL', ...SECTIONS] as const).map((sec) => {
+                  const active = sectionFilter === sec;
+                  return (
+                    <button
+                      key={sec}
+                      type="button"
+                      onClick={() => setSectionFilter(sec)}
+                      className={`py-1 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                        active
+                          ? 'bg-white text-slate-900 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {sec === 'ALL' ? 'Tất cả' : sec.replace('PHẦN ', 'Phần ')}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* Bộ lọc theo Phần */}
-            <div className="grid grid-cols-5 gap-1">
-              {(['ALL', ...SECTIONS] as const).map((sec) => {
-                const active = sectionFilter === sec;
-                return (
-                  <button
-                    key={sec}
-                    type="button"
-                    onClick={() => setSectionFilter(sec)}
-                    className={`py-1 px-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
-                      active
-                        ? 'bg-slate-900 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    {sec === 'ALL' ? 'Tất cả' : sec.replace('PHẦN ', 'P.')}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Danh sách cuộn */}
-            <div className="space-y-1 overflow-y-auto pr-1 flex-1">
+            {/* Danh sách câu hỏi phân cấp rõ ràng */}
+            <div className="p-2 space-y-1 overflow-y-auto flex-1">
               {filteredKeys.map((qKey) => {
                 const q = draft.questions[qKey];
                 if (!q) return null;
@@ -669,149 +671,72 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   <button
                     key={qKey}
                     type="button"
-                    onClick={() => setSelectedQKey(qKey)}
-                    className={`w-full px-2.5 py-2 rounded-xl text-left transition flex flex-col gap-0.5 cursor-pointer border ${
+                    onClick={() => {
+                      setSelectedQKey(qKey);
+                      setExpandedOptCode(null);
+                      setShowParentConfigBox(false);
+                    }}
+                    className={`w-full px-3 py-2.5 rounded-xl text-left transition flex items-start gap-2.5 cursor-pointer border ${
                       active
-                        ? 'bg-red-50/90 border-[#d12f2f] text-slate-900'
+                        ? 'bg-red-50/70 border-[#d12f2f] text-slate-900'
                         : q.hidden
-                        ? 'bg-slate-50 border-slate-200/70 text-slate-400 opacity-65'
-                        : 'bg-white border-slate-100 hover:bg-slate-50 text-slate-700'
-                    } ${isSub ? 'pl-5' : ''}`}
+                        ? 'bg-slate-50 border-transparent text-slate-400 opacity-60'
+                        : 'bg-white border-transparent hover:bg-slate-50 text-slate-700'
+                    } ${isSub ? 'ml-4 w-[calc(100%-1rem)] border-l-2 border-l-red-200' : ''}`}
                   >
-                    <div className="flex items-center justify-between gap-1.5 w-full">
-                      <span className="text-xs font-semibold truncate flex items-center gap-1">
-                        {isSub && (
-                          <CornerDownRight className="w-3.5 h-3.5 text-[#d12f2f] shrink-0" />
-                        )}
-                        <span className="truncate">{q.title}</span>
-                      </span>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
-                          active
-                            ? 'bg-[#d12f2f] text-white'
-                            : 'bg-slate-100 text-slate-500'
-                        }`}
-                      >
-                        {q.type === 'text' ? 'Tự luận' : `${q.options.length} ĐA`}
-                      </span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-bold shrink-0 mt-0.5 ${
+                        active
+                          ? 'bg-[#d12f2f] text-white'
+                          : isSub
+                          ? 'bg-red-50 text-[#d12f2f]'
+                          : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {q.key.replace('_', '.')}
+                    </span>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium leading-snug line-clamp-2">
+                        {cleanShortTitle(q)}
+                      </div>
+                      {isSub && q.parentInfo && (
+                        <div className="text-[10px] font-semibold text-[#d12f2f] mt-0.5 flex items-center gap-1">
+                          <CornerDownRight className="w-3 h-3 shrink-0" />
+                          <span>
+                            Mở khi {q.parentInfo.parentQuestionKey} chọn [
+                            {q.parentInfo.triggerOptionCodes.join(', ')}]
+                          </span>
+                        </div>
+                      )}
                     </div>
 
-                    {isSub && q.parentInfo && (
-                      <div className="text-[10px] font-medium text-[#d12f2f] truncate">
-                        Câu hỏi con của {q.parentInfo.parentQuestionKey} (Đáp án:{' '}
-                        {q.parentInfo.triggerOptionCodes.join(', ')})
-                      </div>
-                    )}
+                    <span className="text-[10px] font-semibold text-slate-400 shrink-0 mt-0.5">
+                      {q.type === 'text' ? 'Tự luận' : `${q.options.length}`}
+                    </span>
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* Cột phải: Chỉnh sửa câu hỏi, Điều kiện câu hỏi con & Danh sách đáp án */}
+          {/* CỘT PHẢI (8/12): Trình biên tập Câu hỏi & Đáp án gọn, thoáng */}
           {activeQ && (
-            <div className="lg:col-span-8 bg-white rounded-2xl p-4 border border-slate-200 space-y-4">
-              {/* Thanh tiêu đề & Thao tác trên câu hỏi */}
-              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-1 rounded-lg bg-red-50 text-[#d12f2f] border border-red-200 font-mono text-xs font-bold">
-                    {activeQ.key}
+            <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+              {/* 1. Thanh công cụ đầu câu hỏi */}
+              <div className="px-5 py-3.5 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-lg bg-[#d12f2f] text-white font-mono text-xs font-bold">
+                    {activeQ.key.replace('_', '.')}
                   </span>
-                  <div>
-                    <span className="text-[11px] font-bold text-slate-500 uppercase block">
-                      {activeQ.section} •{' '}
-                      {activeQ.type === 'single'
-                        ? 'Chọn 1 đáp án'
-                        : activeQ.type === 'multi'
-                        ? 'Chọn nhiều đáp án'
-                        : 'Câu hỏi tự luận (Nhập chữ/số)'}
-                    </span>
-                    {activeQ.parentInfo && (
-                      <span className="text-[11px] font-semibold text-[#d12f2f] inline-flex items-center gap-1">
-                        <GitBranch className="w-3 h-3" />
-                        Câu hỏi con của {activeQ.parentInfo.parentQuestionKey} (khi chọn đáp án{' '}
-                        {activeQ.parentInfo.triggerOptionCodes.join(', ')})
-                      </span>
-                    )}
-                  </div>
-                </div>
 
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => moveQuestionOrder(activeQ.key, -1)}
-                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
-                    title="Đưa câu hỏi lên trên"
-                  >
-                    <ArrowUp className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveQuestionOrder(activeQ.key, 1)}
-                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
-                    title="Đưa câu hỏi xuống dưới"
-                  >
-                    <ArrowDown className="w-3.5 h-3.5" />
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => updateQuestionMeta({ hidden: !activeQ.hidden })}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1 border cursor-pointer ${
-                      activeQ.hidden
-                        ? 'bg-amber-50 text-amber-800 border-amber-200'
-                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    }`}
-                  >
-                    {activeQ.hidden ? (
-                      <>
-                        <EyeOff className="w-3.5 h-3.5" />
-                        Đang ẩn
-                      </>
-                    ) : (
-                      <>
-                        <Eye className="w-3.5 h-3.5" />
-                        Đang hiện
-                      </>
-                    )}
-                  </button>
-
-                  {getDefaultSurveyConfig().questions[activeQ.key] && (
-                    <button
-                      type="button"
-                      onClick={resetCurrentQuestionToDefault}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-medium inline-flex items-center gap-1 cursor-pointer"
-                      title="Khôi phục câu hỏi này về mặc định"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      Gốc
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteQuestion(activeQ.key)}
-                    className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
-                    title="Xóa câu hỏi này"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Xóa câu hỏi
-                  </button>
-                </div>
-              </div>
-
-              {/* Thông tin chung của câu hỏi: Phần, Loại câu hỏi, Bắt buộc, Tiêu đề VI/EN */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                <div className="sm:col-span-3">
-                  <label className="text-[10px] font-semibold text-slate-400 block">
-                    Thuộc Phần khảo sát
-                  </label>
+                  {/* Chọn Phần */}
                   <select
                     value={activeQ.section}
                     onChange={(e) =>
                       updateQuestionMeta({ section: e.target.value as SurveySection })
                     }
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800"
+                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 focus:outline-none focus:border-slate-400"
                   >
                     {SECTIONS.map((s) => (
                       <option key={s} value={s}>
@@ -819,416 +744,510 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                       </option>
                     ))}
                   </select>
-                </div>
 
-                <div className="sm:col-span-4">
-                  <label className="text-[10px] font-semibold text-slate-400 block">
-                    Loại câu hỏi
-                  </label>
-                  <select
-                    value={activeQ.type}
-                    onChange={(e) =>
-                      updateQuestionMeta({ type: e.target.value as QuestionInputType })
+                  {/* Chọn Loại câu hỏi (Segmented Control) */}
+                  <div className="inline-flex bg-slate-200/80 p-0.5 rounded-lg">
+                    {(
+                      [
+                        { id: 'single', label: 'Chọn 1' },
+                        { id: 'multi', label: 'Chọn nhiều' },
+                        { id: 'text', label: 'Tự luận' },
+                      ] as const
+                    ).map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => updateQuestionMeta({ type: t.id })}
+                        className={`px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
+                          activeQ.type === t.id
+                            ? 'bg-white text-slate-900 shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Nếu là Chọn nhiều -> Hiện ô Giới hạn tối đa */}
+                  {activeQ.type === 'multi' && (
+                    <div className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-slate-200 text-xs">
+                      <span className="text-slate-500">Tối đa:</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={15}
+                        value={activeQ.maxSelect ?? 0}
+                        onChange={(e) =>
+                          updateQuestionMeta({ maxSelect: Number(e.target.value) || 0 })
+                        }
+                        className="w-10 text-center font-bold text-slate-900 focus:outline-none"
+                        title="0 = Không giới hạn số đáp án được chọn"
+                      />
+                    </div>
+                  )}
+
+                  {/* Bắt buộc trả lời */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateQuestionMeta({ required: activeQ.required === false })
                     }
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800"
+                    className={`px-2.5 py-1 rounded-lg border text-xs font-semibold transition cursor-pointer ${
+                      activeQ.required !== false
+                        ? 'bg-white text-slate-800 border-slate-300'
+                        : 'bg-transparent text-slate-400 border-slate-200'
+                    }`}
                   >
-                    <option value="single">Trắc nghiệm — Chọn 1 đáp án</option>
-                    <option value="multi">Hộp kiểm — Chọn nhiều đáp án</option>
-                    <option value="text">Tự luận — Nhập văn bản / con số</option>
-                  </select>
+                    {activeQ.required !== false ? '• Bắt buộc' : 'Không bắt buộc'}
+                  </button>
                 </div>
 
-                {activeQ.type === 'multi' ? (
-                  <div className="sm:col-span-2">
-                    <label className="text-[10px] font-semibold text-slate-400 block">
-                      Chọn tối đa (0=Tự do)
+                {/* Nhóm nút thao tác gọn nhẹ bên phải */}
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => moveQuestionOrder(activeQ.key, -1)}
+                    className="p-1.5 rounded-lg hover:bg-slate-200/70 text-slate-500 hover:text-slate-800 cursor-pointer"
+                    title="Chuyển lên trên"
+                  >
+                    <ArrowUp className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveQuestionOrder(activeQ.key, 1)}
+                    className="p-1.5 rounded-lg hover:bg-slate-200/70 text-slate-500 hover:text-slate-800 cursor-pointer"
+                    title="Chuyển xuống dưới"
+                  >
+                    <ArrowDown className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => updateQuestionMeta({ hidden: !activeQ.hidden })}
+                    className={`p-1.5 rounded-lg cursor-pointer ${
+                      activeQ.hidden
+                        ? 'bg-amber-50 text-amber-700'
+                        : 'hover:bg-slate-200/70 text-slate-500 hover:text-slate-800'
+                    }`}
+                    title={activeQ.hidden ? 'Câu hỏi đang ẩn (Bấm để hiện)' : 'Ẩn câu hỏi này'}
+                  >
+                    {activeQ.hidden ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+
+                  {getDefaultSurveyConfig().questions[activeQ.key] && (
+                    <button
+                      type="button"
+                      onClick={resetCurrentQuestionToDefault}
+                      className="p-1.5 rounded-lg hover:bg-slate-200/70 text-slate-500 hover:text-slate-800 cursor-pointer"
+                      title="Khôi phục câu hỏi này về mặc định"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteQuestion(activeQ.key)}
+                    className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 cursor-pointer"
+                    title="Xóa câu hỏi này"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-5">
+                {/* 2. Khung Điều kiện Câu hỏi con (Chỉ hiện khi câu này là câu con hoặc khi bấm nút gắn điều kiện) */}
+                {hasParentLink || showParentConfigBox ? (
+                  <div className="p-3.5 rounded-xl bg-red-50/50 border border-red-200/80 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-bold text-[#d12f2f] flex items-center gap-1.5">
+                        <GitBranch className="w-3.5 h-3.5" />
+                        <span>Điều kiện xuất hiện (Câu hỏi con phụ thuộc đáp án)</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setChildParentLink(null, []);
+                          setShowParentConfigBox(false);
+                        }}
+                        className="text-[11px] font-semibold text-slate-500 hover:text-rose-600 inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Chuyển về câu hỏi độc lập
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                      <span className="sm:col-span-3 text-xs font-medium text-slate-600">
+                        Phụ thuộc câu hỏi cha:
+                      </span>
+                      <div className="sm:col-span-9">
+                        <select
+                          value={activeQ.parentInfo?.parentQuestionKey || ''}
+                          onChange={(e) => {
+                            const nextPKey = e.target.value || null;
+                            setChildParentLink(nextPKey, []);
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-800 focus:outline-none focus:border-[#d12f2f]"
+                        >
+                          <option value="">— Chọn câu hỏi cha —</option>
+                          {parentCandidates.map((pq) => (
+                            <option key={pq.key} value={pq.key}>
+                              {pq.title}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {activeQ.parentInfo?.parentQuestionKey &&
+                      draft.questions[activeQ.parentInfo.parentQuestionKey] && (
+                        <div className="space-y-1.5 pt-1">
+                          <span className="text-[11px] font-medium text-slate-600 block">
+                            Chỉ hiện câu <strong>{activeQ.key}</strong> khi người trả lời chọn
+                            một trong các đáp án sau:
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {draft.questions[
+                              activeQ.parentInfo.parentQuestionKey
+                            ].options.map((pOpt) => {
+                              const isTriggered =
+                                activeQ.parentInfo?.triggerOptionCodes.includes(pOpt.code) ||
+                                false;
+                              return (
+                                <button
+                                  key={pOpt.code}
+                                  type="button"
+                                  onClick={() => {
+                                    const curCodes =
+                                      activeQ.parentInfo?.triggerOptionCodes || [];
+                                    const nextCodes = isTriggered
+                                      ? curCodes.filter((c) => c !== pOpt.code)
+                                      : [...curCodes, pOpt.code];
+                                    setChildParentLink(
+                                      activeQ.parentInfo!.parentQuestionKey,
+                                      nextCodes
+                                    );
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                                    isTriggered
+                                      ? 'bg-[#d12f2f] text-white border-[#d12f2f]'
+                                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {pOpt.code}. {pOpt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-400">
+                      Câu hỏi chính hiển thị trực tiếp trong {activeQ.section}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowParentConfigBox(true)}
+                      className="text-xs font-semibold text-[#d12f2f] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <GitBranch className="w-3.5 h-3.5" />
+                      Đặt làm câu hỏi con (chỉ hiện khi chọn đáp án)...
+                    </button>
+                  </div>
+                )}
+
+                {/* 3. Tiêu đề câu hỏi (Full-width 100% để không bao giờ bị cắt chữ) */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-500 block mb-1">
+                      Nội dung câu hỏi (Tiếng Việt)
                     </label>
                     <input
-                      type="number"
-                      min={0}
-                      max={15}
-                      value={activeQ.maxSelect ?? 0}
-                      onChange={(e) =>
-                        updateQuestionMeta({ maxSelect: Number(e.target.value) || 0 })
-                      }
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900"
+                      type="text"
+                      value={activeQ.title}
+                      onChange={(e) => updateQuestionMeta({ title: e.target.value })}
+                      className="w-full px-3.5 py-2 rounded-xl bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#d12f2f] text-sm font-semibold text-slate-900 focus:outline-none transition"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-400 block mb-1">
+                      Bản dịch Tiếng Anh (English Subtitle)
+                    </label>
+                    <input
+                      type="text"
+                      value={activeQ.enTitle}
+                      onChange={(e) => updateQuestionMeta({ enTitle: e.target.value })}
+                      className="w-full px-3.5 py-1.5 rounded-xl bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-slate-400 text-xs text-slate-600 focus:outline-none transition"
+                    />
+                  </div>
+                </div>
+
+                {/* 4. Nội dung trả lời: Tự luận hoặc Danh sách đáp án gọn 1 hàng */}
+                {activeQ.type === 'text' ? (
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                    <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <MessageSquareText className="w-4 h-4 text-[#d12f2f]" />
+                      Câu hỏi tự luận (Đáp viên nhập chữ hoặc số trên iPad/điện thoại)
+                    </div>
+                    <input
+                      type="text"
+                      value={activeQ.placeholder || ''}
+                      onChange={(e) => updateQuestionMeta({ placeholder: e.target.value })}
+                      placeholder="Nhập dòng chữ gợi ý trong ô trả lời (Placeholder)..."
+                      className="w-full px-3.5 py-2 rounded-lg bg-white border border-slate-200 text-xs text-slate-800 focus:outline-none focus:border-[#d12f2f]"
                     />
                   </div>
                 ) : (
-                  <div className="sm:col-span-2">
-                    <label className="text-[10px] font-semibold text-slate-400 block">
-                      Bắt buộc trả lời
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updateQuestionMeta({ required: activeQ.required === false })
-                      }
-                      className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer ${
-                        activeQ.required !== false
-                          ? 'bg-slate-900 text-white border-slate-900'
-                          : 'bg-slate-50 text-slate-600 border-slate-200'
-                      }`}
-                    >
-                      {activeQ.required !== false ? 'Bắt buộc' : 'Tùy chọn'}
-                    </button>
-                  </div>
-                )}
-
-                {activeQ.section === 'PHẦN A' && (
-                  <div className="sm:col-span-3">
-                    <label className="text-[10px] font-semibold text-slate-400 block">
-                      Nhánh Phần A
-                    </label>
-                    <select
-                      value={activeQ.branch || 'ALL'}
-                      onChange={(e) =>
-                        updateQuestionMeta({
-                          branch: e.target.value as QuestionConfigItem['branch'],
-                        })
-                      }
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700"
-                    >
-                      <option value="A1_A2">Bước A1–A2 (Dự kiến &amp; Đã dùng)</option>
-                      <option value="A_NOT_USED">Nhánh Chưa dùng F&amp;B (A3)</option>
-                      <option value="A_USED">Nhánh Đã dùng F&amp;B (A4–A8)</option>
-                      <option value="ALL">Luôn hiển thị ở Bước A3–A8</option>
-                    </select>
-                  </div>
-                )}
-
-                <div className="sm:col-span-6">
-                  <label className="text-[10px] font-semibold text-slate-400 block">
-                    Nội dung câu hỏi (Tiếng Việt)
-                  </label>
-                  <input
-                    type="text"
-                    value={activeQ.title}
-                    onChange={(e) => updateQuestionMeta({ title: e.target.value })}
-                    className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-900"
-                  />
-                </div>
-
-                <div className="sm:col-span-6">
-                  <label className="text-[10px] font-semibold text-slate-400 block">
-                    Nội dung câu hỏi (Tiếng Anh - EN)
-                  </label>
-                  <input
-                    type="text"
-                    value={activeQ.enTitle}
-                    onChange={(e) => updateQuestionMeta({ enTitle: e.target.value })}
-                    className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700"
-                  />
-                </div>
-              </div>
-
-              {/* Khối cấu hình CÂU HỎI CON (Điều kiện hiển thị khi chọn đáp án xác định) */}
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/90 space-y-2.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <GitBranch className="w-3.5 h-3.5 text-[#d12f2f]" />
-                    <span>
-                      Điều kiện hiển thị (Chọn làm Câu hỏi con khi chọn đáp án xác định)
-                    </span>
-                  </div>
-
-                  <select
-                    value={activeQ.parentInfo?.parentQuestionKey || ''}
-                    onChange={(e) => {
-                      const nextPKey = e.target.value || null;
-                      setChildParentLink(nextPKey, []);
-                    }}
-                    className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-800"
-                  >
-                    <option value="">— Là câu hỏi độc lập (Luôn hiển thị) —</option>
-                    {parentCandidates.map((pq) => (
-                      <option key={pq.key} value={pq.key}>
-                        Là câu hỏi con của: {pq.title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {activeQ.parentInfo?.parentQuestionKey &&
-                  draft.questions[activeQ.parentInfo.parentQuestionKey] && (
-                    <div className="space-y-1.5 pt-1">
-                      <div className="text-[11px] font-medium text-slate-600">
-                        Chọn (các) đáp án của câu{' '}
-                        <strong>{activeQ.parentInfo.parentQuestionKey}</strong> sẽ làm xuất hiện
-                        câu hỏi con <strong>{activeQ.key}</strong>:
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="text-xs font-bold text-slate-800">
+                        Các phương án trả lời ({activeQ.options.length})
                       </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {draft.questions[
-                          activeQ.parentInfo.parentQuestionKey
-                        ].options.map((pOpt) => {
-                          const isTriggered =
-                            activeQ.parentInfo?.triggerOptionCodes.includes(pOpt.code) ||
-                            false;
-                          return (
-                            <button
-                              key={pOpt.code}
-                              type="button"
-                              onClick={() => {
-                                const curCodes =
-                                  activeQ.parentInfo?.triggerOptionCodes || [];
-                                const nextCodes = isTriggered
-                                  ? curCodes.filter((c) => c !== pOpt.code)
-                                  : [...curCodes, pOpt.code];
-                                setChildParentLink(
-                                  activeQ.parentInfo!.parentQuestionKey,
-                                  nextCodes
-                                );
-                              }}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
-                                isTriggered
-                                  ? 'bg-[#d12f2f] text-white border-[#d12f2f]'
-                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                              }`}
-                            >
-                              [{pOpt.code}] {pOpt.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-              </div>
-
-              {/* Nếu là câu hỏi tự luận (text) -> Cấu hình gợi ý nhập (placeholder) */}
-              {activeQ.type === 'text' ? (
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                  <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                    <MessageSquareText className="w-4 h-4 text-[#d12f2f]" />
-                    Cấu hình ô nhập câu trả lời tự luận
-                  </div>
-                  <label className="text-[10px] font-semibold text-slate-400 block">
-                    Dòng chữ gợi ý trong ô nhập (Placeholder)
-                  </label>
-                  <input
-                    type="text"
-                    value={activeQ.placeholder || ''}
-                    onChange={(e) => updateQuestionMeta({ placeholder: e.target.value })}
-                    placeholder="VD: Nhập câu trả lời chi tiết của du khách..."
-                    className="w-full px-3 py-2 rounded-lg bg-white border border-slate-200 text-xs text-slate-800"
-                  />
-                </div>
-              ) : (
-                /* Danh sách các đáp án của câu hỏi trắc nghiệm (single / multi) */
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800">
-                      Danh sách câu trả lời ({activeQ.options.length} đáp án)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={addQuestionOption}
-                      className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Thêm câu trả lời
-                    </button>
-                  </div>
-
-                  <div className="space-y-2 max-h-[48vh] overflow-y-auto pr-1">
-                    {activeQ.options.map((opt, idx) => (
-                      <div
-                        key={`${opt.code}_${idx}`}
-                        className={`p-2.5 rounded-xl border space-y-2 ${
-                          opt.hidden
-                            ? 'bg-slate-50 border-slate-200 opacity-55'
-                            : 'bg-white border-slate-200'
-                        }`}
+                      <button
+                        type="button"
+                        onClick={addQuestionOption}
+                        className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
                       >
-                        {/* Hàng 1: Mã đáp án, Nội dung VI, Nội dung EN, Các nút cờ */}
-                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
-                          <div className="sm:col-span-1 flex items-center">
-                            <input
-                              type="number"
-                              value={opt.code}
-                              onChange={(e) =>
-                                updateQuestionOption(idx, {
-                                  code: Number(e.target.value) || 0,
-                                })
-                              }
-                              title="Mã số đáp án"
-                              className="w-12 px-1.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-800 font-mono text-xs font-bold text-center"
-                            />
-                          </div>
+                        <Plus className="w-3.5 h-3.5" />
+                        Thêm phương án
+                      </button>
+                    </div>
 
-                          <div className="sm:col-span-5">
-                            <input
-                              type="text"
-                              value={opt.label}
-                              onChange={(e) =>
-                                updateQuestionOption(idx, { label: e.target.value })
-                              }
-                              placeholder="Nội dung đáp án Tiếng Việt"
-                              className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-slate-900"
-                            />
-                          </div>
-
-                          <div className="sm:col-span-3">
-                            <input
-                              type="text"
-                              value={opt.en}
-                              onChange={(e) =>
-                                updateQuestionOption(idx, { en: e.target.value })
-                              }
-                              placeholder="Nội dung Tiếng Anh (EN)"
-                              className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600"
-                            />
-                          </div>
-
-                          <div className="sm:col-span-3 flex flex-wrap items-center justify-end gap-1">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateQuestionOption(idx, {
-                                  stopInterview: !opt.stopInterview,
-                                })
-                              }
-                              className={`px-1.5 py-1 rounded text-[10px] font-bold border cursor-pointer ${
-                                opt.stopInterview
-                                  ? 'bg-amber-50 text-amber-800 border-amber-300'
-                                  : 'bg-slate-50 text-slate-400 border-slate-200'
-                              }`}
-                              title="Nếu khách chọn đáp án này thì dừng phỏng vấn (Screen-out)"
-                            >
-                              Dừng
-                            </button>
-
-                            {activeQ.type === 'multi' && (
-                              <button
-                                type="button"
-                                onClick={() =>
+                    {/* Bảng phương án trả lời gọn 1 dòng / phương án */}
+                    <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+                      {activeQ.options.map((opt, idx) => {
+                        const isBranchOpen =
+                          expandedOptCode === opt.code || Boolean(opt.subQuestionKey);
+                        return (
+                          <div
+                            key={`${opt.code}_${idx}`}
+                            className={`p-2.5 transition ${
+                              opt.hidden ? 'bg-slate-50 opacity-55' : 'bg-white hover:bg-slate-50/50'
+                            }`}
+                          >
+                            {/* Dòng chính của phương án */}
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                              {/* Mã số */}
+                              <input
+                                type="number"
+                                value={opt.code}
+                                onChange={(e) =>
                                   updateQuestionOption(idx, {
-                                    exclusive: !opt.exclusive,
+                                    code: Number(e.target.value) || 0,
                                   })
                                 }
-                                className={`px-1.5 py-1 rounded text-[10px] font-bold border cursor-pointer ${
-                                  opt.exclusive
-                                    ? 'bg-purple-50 text-purple-700 border-purple-300'
-                                    : 'bg-slate-50 text-slate-400 border-slate-200'
-                                }`}
-                                title="Đáp án loại trừ các lựa chọn khác"
-                              >
-                                Loại trừ
-                              </button>
+                                title="Mã số đáp án"
+                                className="w-11 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-mono text-xs font-bold text-center shrink-0 focus:outline-none focus:border-slate-400"
+                              />
+
+                              {/* Nhãn Tiếng Việt */}
+                              <input
+                                type="text"
+                                value={opt.label}
+                                onChange={(e) =>
+                                  updateQuestionOption(idx, { label: e.target.value })
+                                }
+                                placeholder="Nội dung đáp án (Tiếng Việt)..."
+                                className="flex-1 min-w-0 px-3 py-1.5 rounded-lg bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#d12f2f] text-xs font-medium text-slate-900 focus:outline-none"
+                              />
+
+                              {/* Nhãn Tiếng Anh */}
+                              <input
+                                type="text"
+                                value={opt.en}
+                                onChange={(e) =>
+                                  updateQuestionOption(idx, { en: e.target.value })
+                                }
+                                placeholder="English label..."
+                                className="sm:w-52 min-w-0 px-2.5 py-1.5 rounded-lg bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-slate-400 text-xs text-slate-500 focus:outline-none"
+                              />
+
+                              {/* Các nút tác vụ gọn trên cùng 1 hàng */}
+                              <div className="flex items-center gap-1 shrink-0 justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedOptCode(
+                                      expandedOptCode === opt.code ? null : opt.code
+                                    )
+                                  }
+                                  className={`px-2 py-1 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 border transition cursor-pointer ${
+                                    opt.subQuestionKey
+                                      ? 'bg-red-50 text-[#d12f2f] border-red-200'
+                                      : expandedOptCode === opt.code
+                                      ? 'bg-slate-900 text-white border-slate-900'
+                                      : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100'
+                                  }`}
+                                  title="Chọn câu hỏi con sẽ mở ra khi chọn đáp án này"
+                                >
+                                  <CornerDownRight className="w-3 h-3" />
+                                  <span>
+                                    {opt.subQuestionKey
+                                      ? `Mở ${opt.subQuestionKey.replace('_', '.')}`
+                                      : 'Câu con'}
+                                  </span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateQuestionOption(idx, {
+                                      stopInterview: !opt.stopInterview,
+                                    })
+                                  }
+                                  className={`px-2 py-1 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
+                                    opt.stopInterview
+                                      ? 'bg-amber-50 text-amber-800 border-amber-300'
+                                      : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'
+                                  }`}
+                                  title="Dừng phỏng vấn (Screen-out) nếu khách chọn đáp án này"
+                                >
+                                  Dừng
+                                </button>
+
+                                {activeQ.type === 'multi' && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateQuestionOption(idx, {
+                                        exclusive: !opt.exclusive,
+                                      })
+                                    }
+                                    className={`px-2 py-1 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
+                                      opt.exclusive
+                                        ? 'bg-purple-50 text-purple-700 border-purple-300'
+                                        : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'
+                                    }`}
+                                    title="Đáp án loại trừ các lựa chọn khác"
+                                  >
+                                    Loại trừ
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateQuestionOption(idx, {
+                                      hasOtherInput: !opt.hasOtherInput,
+                                    })
+                                  }
+                                  className={`px-2 py-1 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
+                                    opt.hasOtherInput
+                                      ? 'bg-blue-50 text-blue-700 border-blue-300'
+                                      : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'
+                                  }`}
+                                  title="Mở thêm ô nhập chữ 'Ghi rõ...' khi chọn đáp án này"
+                                >
+                                  Ghi rõ
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateQuestionOption(idx, { hidden: !opt.hidden })
+                                  }
+                                  className="p-1 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer"
+                                  title={opt.hidden ? 'Hiện đáp án' : 'Ẩn đáp án'}
+                                >
+                                  {opt.hidden ? (
+                                    <EyeOff className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <Eye className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => removeQuestionOption(opt.code)}
+                                  className="p-1 rounded-md hover:bg-rose-50 text-slate-400 hover:text-rose-600 cursor-pointer"
+                                  title="Xóa phương án này"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Thanh chọn Câu hỏi con: Chỉ hiện khi đáp án này có gắn Câu hỏi con hoặc khi Admin bấm vào nút 'Câu con' */}
+                            {isBranchOpen && (
+                              <div className="mt-2 ml-6 pl-3 border-l-2 border-red-200 flex flex-wrap items-center justify-between gap-2 py-1">
+                                <span className="text-[11px] font-medium text-slate-500 flex items-center gap-1">
+                                  <CornerDownRight className="w-3 h-3 text-[#d12f2f]" />
+                                  Khi chọn <strong>"{opt.label}"</strong> → Mở câu hỏi con:
+                                </span>
+
+                                <div className="flex items-center gap-1.5 flex-1 sm:flex-initial justify-end">
+                                  <select
+                                    value={opt.subQuestionKey || ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value || undefined;
+                                      updateQuestionOption(idx, { subQuestionKey: val });
+                                      if (!val) setExpandedOptCode(null);
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800 max-w-xs truncate focus:outline-none focus:border-[#d12f2f]"
+                                  >
+                                    <option value="">— Không mở câu hỏi con —</option>
+                                    {orderedKeys
+                                      .filter((k) => k !== activeQ.key)
+                                      .map((k) => {
+                                        const candidate = draft.questions[k];
+                                        if (!candidate) return null;
+                                        return (
+                                          <option key={k} value={k}>
+                                            {candidate.title}
+                                          </option>
+                                        );
+                                      })}
+                                  </select>
+
+                                  {opt.subQuestionKey &&
+                                    draft.questions[opt.subQuestionKey] && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedQKey(opt.subQuestionKey!);
+                                          setExpandedOptCode(null);
+                                        }}
+                                        className="px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-[#d12f2f] text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <ExternalLink className="w-3 h-3" />
+                                        Sửa câu {opt.subQuestionKey.replace('_', '.')}
+                                      </button>
+                                    )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openAddQuestionModal(
+                                        activeQ.section,
+                                        activeQ.key,
+                                        opt.code
+                                      )
+                                    }
+                                    className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-semibold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                    Tạo câu con mới
+                                  </button>
+                                </div>
+                              </div>
                             )}
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateQuestionOption(idx, {
-                                  hasOtherInput: !opt.hasOtherInput,
-                                })
-                              }
-                              className={`px-1.5 py-1 rounded text-[10px] font-bold border cursor-pointer ${
-                                opt.hasOtherInput
-                                  ? 'bg-blue-50 text-blue-700 border-blue-300'
-                                  : 'bg-slate-50 text-slate-400 border-slate-200'
-                              }`}
-                              title="Hiện ô nhập văn bản 'Khác (ghi rõ)...' ngay khi chọn đáp án này"
-                            >
-                              Nhập Khác
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateQuestionOption(idx, { hidden: !opt.hidden })
-                              }
-                              className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
-                              title={opt.hidden ? 'Hiện đáp án' : 'Ẩn đáp án'}
-                            >
-                              {opt.hidden ? (
-                                <EyeOff className="w-3.5 h-3.5" />
-                              ) : (
-                                <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                              )}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => removeQuestionOption(opt.code)}
-                              className="p-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-600 cursor-pointer"
-                              title="Xóa đáp án"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
                           </div>
-                        </div>
-
-                        {/* Hàng 2: Chọn Câu hỏi con khi người trả lời chọn đáp án này */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 pl-2 pt-1 border-t border-slate-100 text-xs">
-                          <div className="flex items-center gap-1.5 text-slate-500">
-                            <CornerDownRight className="w-3.5 h-3.5 text-[#d12f2f]" />
-                            <span className="text-[11px] font-medium">
-                              Khi chọn đáp án này → Mở câu hỏi con:
-                            </span>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 flex-1 sm:flex-initial justify-end">
-                            <select
-                              value={opt.subQuestionKey || ''}
-                              onChange={(e) =>
-                                updateQuestionOption(idx, {
-                                  subQuestionKey: e.target.value || undefined,
-                                })
-                              }
-                              className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold max-w-[260px] truncate ${
-                                opt.subQuestionKey
-                                  ? 'bg-red-50 text-[#d12f2f] border-red-200'
-                                  : 'bg-slate-50 text-slate-600 border-slate-200'
-                              }`}
-                            >
-                              <option value="">— Không mở câu hỏi con —</option>
-                              {orderedKeys
-                                .filter((k) => k !== activeQ.key)
-                                .map((k) => {
-                                  const candidate = draft.questions[k];
-                                  if (!candidate) return null;
-                                  return (
-                                    <option key={k} value={k}>
-                                      [{k}] {candidate.title}
-                                    </option>
-                                  );
-                                })}
-                            </select>
-
-                            {opt.subQuestionKey && draft.questions[opt.subQuestionKey] && (
-                              <button
-                                type="button"
-                                onClick={() => setSelectedQKey(opt.subQuestionKey!)}
-                                className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold cursor-pointer"
-                                title="Chuyển tới chỉnh sửa câu hỏi con này"
-                              >
-                                Sửa {opt.subQuestionKey}
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                openAddQuestionModal(
-                                  activeQ.section,
-                                  activeQ.key,
-                                  opt.code
-                                )
-                              }
-                              className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-semibold inline-flex items-center gap-1 shrink-0 cursor-pointer"
-                              title="Tạo mới một câu hỏi con gắn trực tiếp vào đáp án này"
-                            >
-                              <Plus className="w-3 h-3" />
-                              Tạo câu con
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -1239,25 +1258,25 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         <div className="fixed inset-0 z-50 bg-slate-950/50 backdrop-blur-xs flex items-center justify-center p-4">
           <form
             onSubmit={handleConfirmAddQuestion}
-            className="bg-white rounded-2xl max-w-lg w-full p-5 border border-slate-200 shadow-xl space-y-3.5"
+            className="bg-white rounded-2xl max-w-lg w-full p-5 border border-slate-200 shadow-xl space-y-4"
           >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">
                   {newQParentKey
                     ? `Tạo câu hỏi con cho câu ${newQParentKey}`
                     : 'Thêm câu hỏi khảo sát mới'}
                 </h3>
-                <p className="text-[11px] text-slate-500">
-                  Hỗ trợ câu hỏi chọn 1, chọn nhiều hoặc tự luận, có thể gắn làm câu hỏi con.
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Hỗ trợ trắc nghiệm chọn 1, chọn nhiều hoặc tự luận điền chữ/số.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setShowAddQModal(false)}
-                className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 text-xs font-semibold cursor-pointer"
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"
               >
-                Đóng
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -1267,22 +1286,22 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
               </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 block">
-                  Mã câu hỏi (Duy nhất)
+                <label className="text-[11px] font-semibold text-slate-500 block mb-1">
+                  Mã câu hỏi
                 </label>
                 <input
                   type="text"
                   value={newQKey}
                   onChange={(e) => setNewQKey(e.target.value.toUpperCase())}
                   placeholder="VD: S10, A2_1"
-                  className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono font-bold uppercase"
+                  className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono font-bold uppercase focus:outline-none focus:border-[#d12f2f]"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 block">
+                <label className="text-[11px] font-semibold text-slate-500 block mb-1">
                   Thuộc Phần
                 </label>
                 <select
@@ -1294,7 +1313,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                       setNewQKey(suggestNextQuestionKey(sec));
                     }
                   }}
-                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold"
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none"
                 >
                   {SECTIONS.map((s) => (
                     <option key={s} value={s}>
@@ -1305,24 +1324,24 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
               </div>
 
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 block">
+                <label className="text-[11px] font-semibold text-slate-500 block mb-1">
                   Loại câu hỏi
                 </label>
                 <select
                   value={newQType}
                   onChange={(e) => setNewQType(e.target.value as QuestionInputType)}
-                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold"
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none"
                 >
                   <option value="single">Chọn 1 đáp án</option>
                   <option value="multi">Chọn nhiều đáp án</option>
-                  <option value="text">Tự luận (Nhập chữ/số)</option>
+                  <option value="text">Tự luận (Điền chữ/số)</option>
                 </select>
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 block">
+                <label className="text-[11px] font-semibold text-slate-500 block mb-1">
                   Tiêu đề câu hỏi (Tiếng Việt)
                 </label>
                 <input
@@ -1330,12 +1349,12 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   value={newQTitle}
                   onChange={(e) => setNewQTitle(e.target.value)}
                   placeholder="Nhập câu hỏi tiếng Việt..."
-                  className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-900"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#d12f2f]"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 block">
+                <label className="text-[11px] font-semibold text-slate-500 block mb-1">
                   Tiêu đề tiếng Anh (EN)
                 </label>
                 <input
@@ -1343,15 +1362,14 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   value={newQEnTitle}
                   onChange={(e) => setNewQEnTitle(e.target.value)}
                   placeholder="English question title..."
-                  className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700"
+                  className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700 focus:outline-none"
                 />
               </div>
             </div>
 
-            {/* Tùy chọn gắn làm Câu hỏi con */}
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
               <label className="text-[11px] font-bold text-slate-700 block">
-                Gắn làm Câu hỏi con (Chỉ hiện khi chọn đáp án xác định):
+                Điều kiện hiển thị (Tùy chọn làm câu hỏi con):
               </label>
               <select
                 value={newQParentKey}
@@ -1369,24 +1387,24 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                     setNewQTriggerCodes([]);
                   }
                 }}
-                className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-medium"
+                className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-medium focus:outline-none"
               >
-                <option value="">— Không (Đây là câu hỏi chính độc lập) —</option>
+                <option value="">— Là câu hỏi chính độc lập —</option>
                 {orderedKeys.map((k) => {
                   const pq = draft.questions[k];
                   if (!pq || pq.type === 'text') return null;
                   return (
                     <option key={k} value={k}>
-                      Câu hỏi cha: [{k}] {pq.title}
+                      Phụ thuộc câu: {pq.title}
                     </option>
                   );
                 })}
               </select>
 
               {newQParentKey && draft.questions[newQParentKey] && (
-                <div className="space-y-1 pt-1">
-                  <span className="text-[10px] font-semibold text-slate-500 block">
-                    Tích chọn đáp án kích hoạt của câu {newQParentKey}:
+                <div className="space-y-1.5 pt-1">
+                  <span className="text-[11px] font-medium text-slate-500 block">
+                    Chọn đáp án kích hoạt của câu {newQParentKey}:
                   </span>
                   <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
                     {draft.questions[newQParentKey].options.map((opt) => {
@@ -1402,13 +1420,13 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                 : [...prev, opt.code]
                             );
                           }}
-                          className={`px-2 py-1 rounded-lg text-[11px] font-medium border cursor-pointer ${
+                          className={`px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer ${
                             active
                               ? 'bg-[#d12f2f] text-white border-[#d12f2f]'
                               : 'bg-white text-slate-700 border-slate-200'
                           }`}
                         >
-                          [{opt.code}] {opt.label}
+                          {opt.code}. {opt.label}
                         </button>
                       );
                     })}
@@ -1417,11 +1435,11 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2">
+            <div className="flex items-center justify-end gap-2 pt-1">
               <button
                 type="button"
                 onClick={() => setShowAddQModal(false)}
-                className="px-3.5 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer"
               >
                 Hủy
               </button>
@@ -1437,10 +1455,10 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         </div>
       )}
 
-      {/* ==================== TAB 1: VỊ TRÍ KHẢO SÁT & QUÀ TẶNG ==================== */}
+      {/* ==================== TAB 2: ĐIỂM KHẢO SÁT & QUÀ TẶNG ==================== */}
       {subTab === 'locations' && (
         <div className="space-y-4">
-          <div className="bg-white rounded-2xl p-4 border border-slate-200 space-y-3">
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 space-y-3 shadow-2xs">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900">
                 Danh sách Vị trí khảo sát hiện trường
@@ -1455,43 +1473,41 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
               </button>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
               {draft.locations.map((loc, idx) => (
                 <div
                   key={loc.id}
-                  className={`p-3 rounded-xl border grid grid-cols-1 sm:grid-cols-12 gap-2 items-center ${
-                    loc.active === false
-                      ? 'bg-slate-50 border-slate-200 opacity-60'
-                      : 'bg-white border-slate-200'
+                  className={`p-3 grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center ${
+                    loc.active === false ? 'bg-slate-50 opacity-60' : 'bg-white'
                   }`}
                 >
                   <div className="sm:col-span-4">
-                    <label className="text-[10px] font-semibold text-slate-400 block">
+                    <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
                       Tên vị trí (Tiếng Việt)
                     </label>
                     <input
                       type="text"
                       value={loc.name}
                       onChange={(e) => updateLocation(idx, { name: e.target.value })}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-900"
+                      className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#d12f2f]"
                     />
                   </div>
 
-                  <div className="sm:col-span-3">
-                    <label className="text-[10px] font-semibold text-slate-400 block">
+                  <div className="sm:col-span-4">
+                    <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
                       Tên tiếng Anh
                     </label>
                     <input
                       type="text"
                       value={loc.en}
                       onChange={(e) => updateLocation(idx, { en: e.target.value })}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700"
+                      className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700 focus:outline-none"
                     />
                   </div>
 
-                  <div className="sm:col-span-2">
-                    <label className="text-[10px] font-semibold text-slate-400 block">
-                      Mã tắt (Phiếu)
+                  <div className="sm:col-span-1">
+                    <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
+                      Mã tắt
                     </label>
                     <input
                       type="text"
@@ -1499,12 +1515,12 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                       onChange={(e) =>
                         updateLocation(idx, { shortCode: e.target.value.toUpperCase() })
                       }
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono font-bold text-slate-800 uppercase"
+                      className="w-full px-2 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono font-bold text-slate-800 text-center uppercase focus:outline-none"
                     />
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="text-[10px] font-semibold text-slate-400 block">
+                    <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
                       Chỉ tiêu mẫu
                     </label>
                     <input
@@ -1514,31 +1530,31 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                       onChange={(e) =>
                         updateLocation(idx, { quotaTarget: Number(e.target.value) || 0 })
                       }
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800 focus:outline-none"
                     />
                   </div>
 
-                  <div className="sm:col-span-1 flex items-center justify-end gap-1 pt-3 sm:pt-0">
+                  <div className="sm:col-span-1 flex items-center justify-end gap-1 pt-3 sm:pt-4">
                     <button
                       type="button"
                       onClick={() => updateLocation(idx, { active: loc.active === false })}
-                      className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+                      className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
                       title={loc.active === false ? 'Hiện điểm này' : 'Ẩn điểm này'}
                     >
                       {loc.active === false ? (
-                        <EyeOff className="w-3.5 h-3.5" />
+                        <EyeOff className="w-4 h-4" />
                       ) : (
-                        <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                        <Eye className="w-4 h-4 text-emerald-600" />
                       )}
                     </button>
                     {draft.locations.length > 1 && (
                       <button
                         type="button"
                         onClick={() => removeLocation(loc.id)}
-                        className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 cursor-pointer"
+                        className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 cursor-pointer"
                         title="Xóa điểm khảo sát"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     )}
                   </div>
@@ -1547,11 +1563,10 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
             </div>
           </div>
 
-          {/* Danh sách Quà tặng khảo sát có sẵn */}
-          <div className="bg-white rounded-2xl p-4 border border-slate-200 space-y-3">
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 space-y-3 shadow-2xs">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
               <Gift className="w-4 h-4 text-[#d12f2f]" />
-              Danh mục Quà tặng khảo sát có sẵn (chọn nhanh cho Đáp viên)
+              Danh mục Quà tặng khảo sát có sẵn
             </h3>
 
             <div className="flex gap-2">
@@ -1565,13 +1580,13 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                     addGiftPreset();
                   }
                 }}
-                placeholder="Nhập tên quà tặng mới (VD: Voucher bia thủ công)..."
-                className="flex-1 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs"
+                placeholder="Nhập tên quà tặng mới (VD: Voucher ẩm thực 50.000đ)..."
+                className="flex-1 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:border-[#d12f2f]"
               />
               <button
                 type="button"
                 onClick={addGiftPreset}
-                className="px-3.5 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 Thêm quà
@@ -1603,7 +1618,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
 
       {/* ==================== TAB 3: ĐỊNH DẠNG DỮ LIỆU & CHỈ TIÊU QUOTA ==================== */}
       {subTab === 'format' && (
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl p-5 border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-4 shadow-2xs">
           <div>
             <label className="text-xs font-semibold text-slate-700 block mb-1">
               Tiền tố Mã phiếu khảo sát (VD: BN-2710-CT-001)
@@ -1620,7 +1635,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   },
                 }))
               }
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-mono font-bold uppercase"
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-mono font-bold uppercase focus:outline-none focus:border-[#d12f2f]"
             />
           </div>
 
@@ -1639,7 +1654,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   },
                 }))
               }
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium"
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium focus:outline-none"
             >
               <option value="code_and_label">Mã số + Nhãn chữ (VD: 1 - Nhà hàng buffet)</option>
               <option value="code_only">Chỉ xuất Mã số (VD: 1, 2, 3 — Chuẩn chạy SPSS)</option>
@@ -1662,7 +1677,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   },
                 }))
               }
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium"
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium focus:outline-none"
             >
               <option value=",">Dấu phẩy (,) — Chuẩn quốc tế</option>
               <option value=";">Dấu chấm phẩy (;) — Chuẩn Excel Việt Nam</option>
@@ -1685,7 +1700,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   },
                 }))
               }
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium"
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium focus:outline-none"
             >
               <option value="; ">Dấu chấm phẩy (; )</option>
               <option value=" | ">Dấu gạch đứng ( | )</option>
@@ -1710,7 +1725,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   },
                 }))
               }
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold"
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold focus:outline-none"
             />
           </div>
 
@@ -1731,7 +1746,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   },
                 }))
               }
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold"
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold focus:outline-none"
             />
           </div>
         </div>

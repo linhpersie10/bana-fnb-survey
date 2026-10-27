@@ -474,7 +474,7 @@ export const App: React.FC = () => {
     <div className="min-h-screen bg-[#f6f7f9] text-slate-900 flex flex-col">
       {/* Compact Header (Ban Ẩm Thực) */}
       <header className="sticky top-0 z-40 bg-white border-b border-slate-200">
-        <div className="max-w-5xl mx-auto px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3 min-w-0">
             <BrandMark size="sm" />
             <div className="hidden sm:flex items-center gap-2 border-l border-slate-200 pl-3 min-w-0">
@@ -535,7 +535,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* Clean Role-Based Navigation Bar */}
-        <div className="max-w-5xl mx-auto px-3 sm:px-5 flex items-center gap-1 overflow-x-auto no-scrollbar border-t border-slate-100">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center gap-1 overflow-x-auto no-scrollbar border-t border-slate-100">
           <button
             type="button"
             onClick={() => setActiveTab('survey')}
@@ -612,7 +612,7 @@ export const App: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-5 pt-3.5 pb-10">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 pt-4 pb-12">
         {activeTab === 'survey' && (
           <div className="max-w-2xl mx-auto">
             <SurveyWizard
