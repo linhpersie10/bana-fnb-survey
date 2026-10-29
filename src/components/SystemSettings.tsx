@@ -33,6 +33,7 @@ import {
 interface SystemSettingsProps {
   config: SurveySystemConfig;
   actorEmail?: string;
+  actorRole?: 'superadmin' | 'admin' | 'interviewer';
   onConfigSaved: (next: SurveySystemConfig) => void;
 }
 
@@ -43,6 +44,7 @@ const SECTIONS: SurveySection[] = ['PHẦN S', 'PHẦN A', 'PHẦN B', 'PHẦN C
 export const SystemSettings: React.FC<SystemSettingsProps> = ({
   config,
   actorEmail,
+  actorRole = 'admin',
   onConfigSaved,
 }) => {
   const [subTab, setSubTab] = useState<SettingsSubTab>('questions');
@@ -57,6 +59,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
   const [newGiftInput, setNewGiftInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Modal tạo câu hỏi mới / câu hỏi con
   const [showAddQModal, setShowAddQModal] = useState(false);
@@ -77,18 +80,9 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
     }
   }, [config, selectedQKey]);
 
-  const applyDraftWithSync = (updater: (prev: SurveySystemConfig) => SurveySystemConfig) => {
-    setDraft((prev) => {
-      const updated = updater(prev);
-      return {
-        ...updated,
-        questions: normalizeQuestionLinks(updated.questions, updated.questionOrder),
-      };
-    });
-  };
-
   const handleSaveAll = async (nextDraft = draft) => {
     setSaving(true);
+    setSaveError(null);
     try {
       const synced: SurveySystemConfig = {
         ...nextDraft,
@@ -98,8 +92,26 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
       onConfigSaved(synced);
       setSavedToast(true);
       setTimeout(() => setSavedToast(false), 2200);
+    } catch (err: unknown) {
+      const msg = (err as { message?: string })?.message || 'Lỗi kết nối Firestore';
+      setSaveError(`Đã lưu trên máy. Chưa đồng bộ Cloud (${msg}).`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const applyDraftWithSync = (
+    updater: (prev: SurveySystemConfig) => SurveySystemConfig,
+    autoSaveCloud = false
+  ) => {
+    const updated = updater(draft);
+    const nextSynced: SurveySystemConfig = {
+      ...updated,
+      questions: normalizeQuestionLinks(updated.questions, updated.questionOrder),
+    };
+    setDraft(nextSynced);
+    if (autoSaveCloud) {
+      void handleSaveAll(nextSynced);
     }
   };
 
@@ -298,7 +310,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         deletedQuestionKeys: nextDeleted,
         questions: nextQuestions,
       };
-    });
+    }, true);
 
     setSelectedQKey(cleanKey);
     setExpandedOptCode(null);
@@ -347,7 +359,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         deletedQuestionKeys: nextDeleted,
         questions: nextQuestions,
       };
-    });
+    }, true);
 
     if (fallbackKey && fallbackKey !== qKey) {
       setSelectedQKey(fallbackKey);
@@ -355,7 +367,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
   };
 
   const moveQuestionOrder = (qKey: string, direction: -1 | 1) => {
-    setDraft((prev) => {
+    applyDraftWithSync((prev) => {
       const list = [...prev.questionOrder];
       const idx = list.indexOf(qKey);
       const targetIdx = idx + direction;
@@ -364,10 +376,13 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
       list[idx] = list[targetIdx];
       list[targetIdx] = temp;
       return { ...prev, questionOrder: list };
-    });
+    }, true);
   };
 
-  const updateQuestionMeta = (patch: Partial<QuestionConfigItem>) => {
+  const updateQuestionMeta = (
+    patch: Partial<QuestionConfigItem>,
+    autoSaveCloud = false
+  ) => {
     if (!activeQ) return;
     applyDraftWithSync((prev) => {
       const current = prev.questions[activeQ.key];
@@ -392,7 +407,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
           [activeQ.key]: updated,
         },
       };
-    });
+    }, autoSaveCloud);
   };
 
   const setChildParentLink = (parentKey: string | null, triggerCodes: number[]) => {
@@ -443,13 +458,14 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         ...prev,
         questions: nextQuestions,
       };
-    });
+    }, true);
   };
 
   // ==================== XỬ LÝ CÂU TRẢ LỜI (OPTIONS) ====================
   const updateQuestionOption = (
     optIdx: number,
-    patch: Partial<ConfigurableOptionItem>
+    patch: Partial<ConfigurableOptionItem>,
+    autoSaveCloud = false
   ) => {
     if (!activeQ) return;
     applyDraftWithSync((prev) => {
@@ -463,7 +479,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
           [activeQ.key]: { ...q, options: nextOpts },
         },
       };
-    });
+    }, autoSaveCloud);
   };
 
   const addQuestionOption = () => {
@@ -490,7 +506,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
           },
         },
       };
-    });
+    }, true);
   };
 
   const removeQuestionOption = (code: number) => {
@@ -509,7 +525,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
           options: q.options.filter((o) => o.code !== code),
         },
       },
-    }));
+    }), true);
   };
 
   const resetCurrentQuestionToDefault = () => {
@@ -522,7 +538,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         ...prev.questions,
         [activeQ.key]: def.questions[activeQ.key],
       },
-    }));
+    }), true);
   };
 
   const resetEntireConfigToDefault = async () => {
@@ -595,6 +611,9 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          <span className="hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 text-[11px] font-semibold">
+            Quyền {actorRole === 'superadmin' ? 'Superadmin' : 'Admin'}: Toàn quyền Thêm / Sửa / Xóa
+          </span>
           <button
             type="button"
             onClick={() => void resetEntireConfigToDefault()}
@@ -617,6 +636,19 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
           </button>
         </div>
       </div>
+
+      {saveError && (
+        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium flex items-center justify-between">
+          <span>{saveError}</span>
+          <button
+            type="button"
+            onClick={() => void handleSaveAll()}
+            className="px-2.5 py-1 rounded-lg bg-amber-600 text-white font-semibold cursor-pointer"
+          >
+            Thử đồng bộ lại
+          </button>
+        </div>
+      )}
 
       {/* ==================== TAB 1: BỘ CÂU HỎI & RẼ NHÁNH ==================== */}
       {subTab === 'questions' && (
@@ -734,7 +766,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   <select
                     value={activeQ.section}
                     onChange={(e) =>
-                      updateQuestionMeta({ section: e.target.value as SurveySection })
+                      updateQuestionMeta({ section: e.target.value as SurveySection }, true)
                     }
                     className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 focus:outline-none focus:border-slate-400"
                   >
@@ -757,7 +789,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                       <button
                         key={t.id}
                         type="button"
-                        onClick={() => updateQuestionMeta({ type: t.id })}
+                        onClick={() => updateQuestionMeta({ type: t.id }, true)}
                         className={`px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
                           activeQ.type === t.id
                             ? 'bg-white text-slate-900 shadow-2xs'
@@ -781,6 +813,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                         onChange={(e) =>
                           updateQuestionMeta({ maxSelect: Number(e.target.value) || 0 })
                         }
+                        onBlur={() => void handleSaveAll()}
                         className="w-10 text-center font-bold text-slate-900 focus:outline-none"
                         title="0 = Không giới hạn số đáp án được chọn"
                       />
@@ -791,7 +824,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   <button
                     type="button"
                     onClick={() =>
-                      updateQuestionMeta({ required: activeQ.required === false })
+                      updateQuestionMeta({ required: activeQ.required === false }, true)
                     }
                     className={`px-2.5 py-1 rounded-lg border text-xs font-semibold transition cursor-pointer ${
                       activeQ.required !== false
@@ -824,7 +857,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => updateQuestionMeta({ hidden: !activeQ.hidden })}
+                    onClick={() => updateQuestionMeta({ hidden: !activeQ.hidden }, true)}
                     className={`p-1.5 rounded-lg cursor-pointer ${
                       activeQ.hidden
                         ? 'bg-amber-50 text-amber-700'
@@ -975,6 +1008,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                       type="text"
                       value={activeQ.title}
                       onChange={(e) => updateQuestionMeta({ title: e.target.value })}
+                      onBlur={() => void handleSaveAll()}
                       className="w-full px-3.5 py-2 rounded-xl bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#d12f2f] text-sm font-semibold text-slate-900 focus:outline-none transition"
                     />
                   </div>
@@ -987,6 +1021,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                       type="text"
                       value={activeQ.enTitle}
                       onChange={(e) => updateQuestionMeta({ enTitle: e.target.value })}
+                      onBlur={() => void handleSaveAll()}
                       className="w-full px-3.5 py-1.5 rounded-xl bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-slate-400 text-xs text-slate-600 focus:outline-none transition"
                     />
                   </div>
@@ -1003,6 +1038,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                       type="text"
                       value={activeQ.placeholder || ''}
                       onChange={(e) => updateQuestionMeta({ placeholder: e.target.value })}
+                      onBlur={() => void handleSaveAll()}
                       placeholder="Nhập dòng chữ gợi ý trong ô trả lời (Placeholder)..."
                       className="w-full px-3.5 py-2 rounded-lg bg-white border border-slate-200 text-xs text-slate-800 focus:outline-none focus:border-[#d12f2f]"
                     />
@@ -1046,6 +1082,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                     code: Number(e.target.value) || 0,
                                   })
                                 }
+                                onBlur={() => void handleSaveAll()}
                                 title="Mã số đáp án"
                                 className="w-11 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-mono text-xs font-bold text-center shrink-0 focus:outline-none focus:border-slate-400"
                               />
@@ -1057,6 +1094,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                 onChange={(e) =>
                                   updateQuestionOption(idx, { label: e.target.value })
                                 }
+                                onBlur={() => void handleSaveAll()}
                                 placeholder="Nội dung đáp án (Tiếng Việt)..."
                                 className="flex-1 min-w-0 px-3 py-1.5 rounded-lg bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#d12f2f] text-xs font-medium text-slate-900 focus:outline-none"
                               />
@@ -1068,6 +1106,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                 onChange={(e) =>
                                   updateQuestionOption(idx, { en: e.target.value })
                                 }
+                                onBlur={() => void handleSaveAll()}
                                 placeholder="English label..."
                                 className="sm:w-52 min-w-0 px-2.5 py-1.5 rounded-lg bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-slate-400 text-xs text-slate-500 focus:outline-none"
                               />
@@ -1101,9 +1140,13 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    updateQuestionOption(idx, {
-                                      stopInterview: !opt.stopInterview,
-                                    })
+                                    updateQuestionOption(
+                                      idx,
+                                      {
+                                        stopInterview: !opt.stopInterview,
+                                      },
+                                      true
+                                    )
                                   }
                                   className={`px-2 py-1 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
                                     opt.stopInterview
@@ -1119,9 +1162,13 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      updateQuestionOption(idx, {
-                                        exclusive: !opt.exclusive,
-                                      })
+                                      updateQuestionOption(
+                                        idx,
+                                        {
+                                          exclusive: !opt.exclusive,
+                                        },
+                                        true
+                                      )
                                     }
                                     className={`px-2 py-1 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
                                       opt.exclusive
@@ -1137,9 +1184,13 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    updateQuestionOption(idx, {
-                                      hasOtherInput: !opt.hasOtherInput,
-                                    })
+                                    updateQuestionOption(
+                                      idx,
+                                      {
+                                        hasOtherInput: !opt.hasOtherInput,
+                                      },
+                                      true
+                                    )
                                   }
                                   className={`px-2 py-1 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
                                     opt.hasOtherInput
@@ -1154,7 +1205,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    updateQuestionOption(idx, { hidden: !opt.hidden })
+                                    updateQuestionOption(idx, { hidden: !opt.hidden }, true)
                                   }
                                   className="p-1 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer"
                                   title={opt.hidden ? 'Hiện đáp án' : 'Ẩn đáp án'}
@@ -1190,7 +1241,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                     value={opt.subQuestionKey || ''}
                                     onChange={(e) => {
                                       const val = e.target.value || undefined;
-                                      updateQuestionOption(idx, { subQuestionKey: val });
+                                      updateQuestionOption(idx, { subQuestionKey: val }, true);
                                       if (!val) setExpandedOptCode(null);
                                     }}
                                     className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800 max-w-xs truncate focus:outline-none focus:border-[#d12f2f]"

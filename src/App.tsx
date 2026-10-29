@@ -34,6 +34,7 @@ import {
   saveLocalInterviewerProfile,
   fetchInterviewerProfileAndPin,
   saveInterviewerProfileAndPinToCloud,
+  subscribeToCurrentUserProfile,
   submitSurveyResponse,
   syncPendingOfflineResponses,
   subscribeToSurveyResponses,
@@ -232,6 +233,14 @@ export const App: React.FC = () => {
 
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    if (!authUser || authUser.isDemo) return;
+    const unsubProfile = subscribeToCurrentUserProfile(authUser.uid, (liveProfile) => {
+      setProfile(liveProfile);
+    });
+    return () => unsubProfile();
+  }, [authUser]);
 
   useEffect(() => {
     if (!authUser || !pinUnlocked) return;
@@ -649,7 +658,7 @@ export const App: React.FC = () => {
             config={surveyConfig}
             isSyncing={isSyncing}
             canExportAll={isAdminOrSuper}
-            canDelete={isSuperadmin}
+            canDelete={isAdminOrSuper}
             onSyncOffline={handleManualSync}
             onDeleteResponse={handleDeleteResponse}
           />
@@ -663,6 +672,7 @@ export const App: React.FC = () => {
           <SystemSettings
             config={surveyConfig}
             actorEmail={authUser.email}
+            actorRole={userRole}
             onConfigSaved={setSurveyConfig}
           />
         )}

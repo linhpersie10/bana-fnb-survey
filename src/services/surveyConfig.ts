@@ -668,9 +668,12 @@ export async function saveSurveyConfigToCloud(
   };
   saveLocalSurveyConfig(payload);
 
-  // Dùng setDoc không merge cho nhánh questions để đảm bảo khi Admin xóa câu hỏi hoặc đáp án thì Cloud cũng xóa sạch
+  // Loại bỏ toàn bộ thuộc tính undefined (VD: subQuestionKey: undefined, branch: undefined)
+  // để Firestore setDoc không bao giờ báo lỗi "Unsupported field value: undefined" khi Admin thêm/sửa/xóa câu hỏi
+  const sanitizedPayload = JSON.parse(JSON.stringify(payload)) as SurveySystemConfig;
+
   await setDoc(doc(db, 'FNB_SURVEY_config', 'main'), {
-    ...payload,
+    ...sanitizedPayload,
     serverUpdatedAt: serverTimestamp(),
   });
 }

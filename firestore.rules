@@ -10,6 +10,7 @@ service cloud.firestore {
         request.auth.token.email == 'linh.persie.10@gmail.com' ||
         request.auth.token.rev_isSuperadmin == true ||
         request.auth.token.superadmin == true ||
+        request.auth.token.role == 'superadmin' ||
         request.auth.token.fnb == 1
       );
     }
@@ -18,12 +19,25 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/FNB_SURVEY_users/$(request.auth.uid)).data;
     }
 
+    function hasAdminInvite() {
+      return isSignedIn() &&
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/FNB_SURVEY_role_invites/$(request.auth.token.email.lower())) &&
+        (
+          get(/databases/$(database)/documents/FNB_SURVEY_role_invites/$(request.auth.token.email.lower())).data.role == 'admin' ||
+          get(/databases/$(database)/documents/FNB_SURVEY_role_invites/$(request.auth.token.email.lower())).data.role == 'superadmin'
+        );
+    }
+
     function isAdminOrSuper() {
-      return isSuperAdmin() || (
-        isSignedIn() &&
-        exists(/databases/$(database)/documents/FNB_SURVEY_users/$(request.auth.uid)) &&
-        (getUserData().role == 'superadmin' || getUserData().role == 'admin' || getUserData().isSuperadmin == true)
-      );
+      return isSuperAdmin() ||
+        (isSignedIn() && (request.auth.token.role == 'admin' || request.auth.token.admin == true)) ||
+        (
+          isSignedIn() &&
+          exists(/databases/$(database)/documents/FNB_SURVEY_users/$(request.auth.uid)) &&
+          (getUserData().role == 'superadmin' || getUserData().role == 'admin' || getUserData().isSuperadmin == true)
+        ) ||
+        hasAdminInvite();
     }
 
     // Hồ sơ người dùng & phân quyền (Superadmin / Admin / Đáp viên)
@@ -45,10 +59,10 @@ service cloud.firestore {
       allow write: if isAdminOrSuper();
     }
 
-    // Cấu hình hệ thống khảo sát (Vị trí, Danh sách đáp án, Định dạng dữ liệu)
+    // Cấu hình hệ thống khảo sát (Câu hỏi, Đáp án, Câu hỏi con, Vị trí, Định dạng dữ liệu)
     match /FNB_SURVEY_config/{configId} {
       allow read: if isSignedIn();
-      allow write: if isAdminOrSuper();
+      allow create, update, delete, write: if isAdminOrSuper();
     }
 
     // Dữ liệu phiếu khảo sát F&B Sun World Ba Na Hills

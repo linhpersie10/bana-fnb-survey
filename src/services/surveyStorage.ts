@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   deleteDoc,
   onSnapshot,
@@ -125,13 +126,22 @@ export async function fetchInterviewerProfileAndPin(
     }
 
     const inviteData = inviteSnap && inviteSnap.exists() ? inviteSnap.data() : null;
+    const roleRank: Record<UserRole, number> = {
+      superadmin: 3,
+      admin: 2,
+      interviewer: 1,
+    };
 
     let profile: InterviewerProfile = fallbackProfile;
     if (userSnap.exists()) {
       const d = userSnap.data();
+      const dbRole = (d.role as UserRole) || 'interviewer';
+      const inviteRole = (inviteData?.role as UserRole) || 'interviewer';
       const resolvedRole: UserRole = superAdmin
         ? 'superadmin'
-        : (d.role as UserRole) || (inviteData?.role as UserRole) || 'interviewer';
+        : roleRank[inviteRole] > roleRank[dbRole]
+        ? inviteRole
+        : dbRole;
       profile = {
         uid,
         email: d.email || email,
@@ -149,10 +159,20 @@ export async function fetchInterviewerProfileAndPin(
         hasPin: Boolean(pinRecord || d.hasPin),
         updatedAt: d.updatedAtIso || new Date().toISOString(),
       };
-      if (superAdmin && (d.role !== 'superadmin' || !d.isSuperadmin)) {
+      // Đồng bộ ngay quyền lên FNB_SURVEY_users/{uid} nếu quyền mới cao hơn quyền cũ (VD: vừa được nâng lên admin)
+      if (
+        (superAdmin && (d.role !== 'superadmin' || !d.isSuperadmin)) ||
+        d.role !== resolvedRole
+      ) {
         await setDoc(
           doc(db, 'FNB_SURVEY_users', uid),
-          { role: 'superadmin', isSuperadmin: true, status: 'approved' },
+          {
+            role: resolvedRole,
+            isSuperadmin: superAdmin || resolvedRole === 'superadmin',
+            status: superAdmin ? 'approved' : profile.status,
+            updatedAtIso: new Date().toISOString(),
+            updatedAt: serverTimestamp(),
+          },
           { merge: true }
         );
       }
@@ -198,6 +218,27 @@ export async function saveInterviewerProfileAndPinToCloud(
   if (profile.isDemoMode) return;
 
   try {
+    const roleRank: Record<UserRole, number> = {
+      superadmin: 3,
+      admin: 2,
+      interviewer: 1,
+    };
+    let effectiveRole: UserRole = isSuperAdminEmail(profile.email) ? 'superadmin' : profile.role;
+    const existingSnap = await getDoc(doc(db, 'FNB_SURVEY_users', profile.uid)).catch(() => null);
+    if (existingSnap && existingSnap.exists()) {
+      const cloudRole = (existingSnap.data().role as UserRole) || 'interviewer';
+      if (roleRank[cloudRole] > roleRank[effectiveRole]) {
+        effectiveRole = cloudRole;
+      }
+    }
+
+    const updatedProfile: InterviewerProfile = {
+      ...profile,
+      role: effectiveRole,
+      isSuperadmin: Boolean(profile.isSuperadmin || effectiveRole === 'superadmin'),
+    };
+    saveLocalInterviewerProfile(updatedProfile);
+
     await setDoc(
       doc(db, 'FNB_SURVEY_users', profile.uid),
       {
@@ -205,9 +246,9 @@ export async function saveInterviewerProfileAndPinToCloud(
         email: profile.email,
         displayName: profile.displayName,
         photoURL: profile.photoURL || '',
-        role: profile.role,
+        role: effectiveRole,
         status: profile.status,
-        isSuperadmin: Boolean(profile.isSuperadmin || profile.role === 'superadmin'),
+        isSuperadmin: Boolean(profile.isSuperadmin || effectiveRole === 'superadmin'),
         interviewerCode: profile.interviewerCode,
         defaultLocationId: profile.defaultLocationId,
         defaultGiftName: profile.defaultGiftName,
@@ -316,6 +357,41 @@ export async function resetUserPinByAdmin(targetUid: string): Promise<void> {
   );
 }
 
+export function subscribeToCurrentUserProfile(
+  uid: string,
+  onUpdate: (profile: InterviewerProfile) => void
+): () => void {
+  try {
+    return onSnapshot(
+      doc(db, 'FNB_SURVEY_users', uid),
+      (snap) => {
+        if (!snap.exists()) return;
+        const d = snap.data();
+        const superAdmin = isSuperAdminEmail(d.email) || Boolean(d.isSuperadmin);
+        const liveProfile: InterviewerProfile = {
+          uid: snap.id,
+          email: d.email || '',
+          displayName: d.displayName || d.email || 'Người dùng',
+          photoURL: d.photoURL || '',
+          role: superAdmin ? 'superadmin' : (d.role as UserRole) || 'interviewer',
+          status: superAdmin ? 'approved' : (d.status as UserAccountStatus) || 'approved',
+          isSuperadmin: superAdmin,
+          interviewerCode: d.interviewerCode || `PVV-${snap.id.slice(0, 4).toUpperCase()}`,
+          defaultLocationId: Number(d.defaultLocationId) || 1,
+          defaultGiftName: d.defaultGiftName || 'Voucher ẩm thực / Quà lưu niệm Ba Na Hills',
+          hasPin: Boolean(d.hasPin),
+          updatedAt: d.updatedAtIso || new Date().toISOString(),
+        };
+        saveLocalInterviewerProfile(liveProfile);
+        onUpdate(liveProfile);
+      },
+      () => {}
+    );
+  } catch {
+    return () => {};
+  }
+}
+
 export async function preAssignRoleByEmail(
   email: string,
   role: UserRole,
@@ -335,6 +411,35 @@ export async function preAssignRoleByEmail(
     },
     { merge: true }
   );
+
+  // Nếu email này đã từng đăng nhập trong FNB_SURVEY_users thì cập nhật trực tiếp quyền (VD: admin) ngay lập tức
+  try {
+    const snap = await getDocs(query(collection(db, 'FNB_SURVEY_users')));
+    const updates: Promise<void>[] = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data();
+      if ((d.email || '').trim().toLowerCase() === cleanEmail) {
+        updates.push(
+          setDoc(
+            doc(db, 'FNB_SURVEY_users', docSnap.id),
+            {
+              role,
+              isSuperadmin: role === 'superadmin' || isSuperAdminEmail(cleanEmail),
+              defaultLocationId,
+              updatedAtIso: new Date().toISOString(),
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          )
+        );
+      }
+    });
+    if (updates.length > 0) {
+      await Promise.all(updates);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 export async function deleteSurveyResponseById(id: string): Promise<void> {
