@@ -164,6 +164,7 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
                     key: k,
                     title: config.questions[k].title,
                     type: config.questions[k].type,
+                    likertScale: config.questions[k].likertScale,
                     options: config.questions[k].options,
                   }));
                 exportResponsesToCsv(filteredResponses, {
@@ -389,6 +390,27 @@ export const ResponsesTable: React.FC<ResponsesTableProps> = ({
                   {selectedResponse.customAnswers &&
                     Object.entries(selectedResponse.customAnswers).map(([k, val]) => {
                       if (val === null || val === undefined || val === '') return null;
+                      if (k.includes('__')) {
+                        const [qKey, rowNumStr] = k.split('__');
+                        const rowNum = Number(rowNumStr);
+                        const qMeta = config.questions[qKey];
+                        const rowOpt = qMeta?.options.find((o) => o.code === rowNum);
+                        const scaleLabel =
+                          typeof val === 'number' && qMeta?.likertScale?.[val - 1]
+                            ? `${val} - ${qMeta.likertScale[val - 1]}`
+                            : String(val);
+                        return (
+                          <div key={k}>
+                            <span className="text-slate-400">
+                              {rowOpt
+                                ? `${rowOpt.rowCode || `${qKey}.${rowNum}`} (${rowOpt.label})`
+                                : k}
+                              :{' '}
+                            </span>
+                            <strong className="text-slate-800">{scaleLabel}</strong>
+                          </div>
+                        );
+                      }
                       const qMeta = config.questions[k];
                       const displayVal = Array.isArray(val)
                         ? val

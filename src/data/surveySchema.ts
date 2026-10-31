@@ -635,6 +635,67 @@ export function setOtherInputAnswer(
   };
 }
 
+/**
+ * Lấy điểm đánh giá (1..5) cho một dòng cụ thể `rowCode` trong câu hỏi Likert nhiều dòng `qKey`.
+ * Đồng bộ ngược hoàn toàn với `B5.B5_1 .. B5.B5_6`.
+ */
+export function getLikertRowAnswer(
+  data: SurveyResponseData,
+  qKey: string,
+  rowCode: number
+): number | null {
+  const rowKey = `${qKey}__${rowCode}`;
+  const customVal = data.customAnswers?.[rowKey];
+  if (typeof customVal === 'number') {
+    return customVal;
+  }
+  if (qKey === 'B5' && rowCode >= 1 && rowCode <= 6) {
+    const b5Key = `B5_${rowCode}` as keyof SurveyResponseData['B5'];
+    const b5Val = data.B5?.[b5Key];
+    if (typeof b5Val === 'number') {
+      return b5Val;
+    }
+  }
+  if (rowCode === 1) {
+    const legacySingle = data.customAnswers?.[qKey];
+    if (typeof legacySingle === 'number') {
+      return legacySingle;
+    }
+  }
+  return null;
+}
+
+/**
+ * Ghi điểm đánh giá (1..5) cho một dòng cụ thể `rowCode` trong câu hỏi Likert nhiều dòng `qKey`.
+ */
+export function setLikertRowAnswer(
+  prev: SurveyResponseData,
+  qKey: string,
+  rowCode: number,
+  score: number | null
+): SurveyResponseData {
+  const rowKey = `${qKey}__${rowCode}`;
+  const nextCustomAnswers = {
+    ...(prev.customAnswers || {}),
+    [rowKey]: score,
+  };
+  if (qKey === 'B5' && rowCode >= 1 && rowCode <= 6) {
+    const b5Key = `B5_${rowCode}` as keyof SurveyResponseData['B5'];
+    return {
+      ...prev,
+      B5: {
+        ...prev.B5,
+        [b5Key]: score,
+      },
+      customAnswers: nextCustomAnswers,
+    };
+  }
+  return {
+    ...prev,
+    customAnswers: nextCustomAnswers,
+  };
+}
+
 export function createEmptySurveyResponse(
   interviewerUid: string,
   interviewerName: string,
@@ -745,7 +806,8 @@ export interface CustomQuestionCsvMeta {
   key: string;
   title: string;
   type: 'single' | 'multi' | 'likert' | 'text';
-  options: OptionItem[];
+  likertScale?: string[];
+  options: (OptionItem & { rowCode?: string })[];
 }
 
 export interface CsvExportOptions {
@@ -788,6 +850,29 @@ export function exportResponsesToCsv(
       })
       .join(multiSep);
   };
+
+  const formatLikertScore = (score: number | null, scaleLabels?: string[]) => {
+    if (score === null || score === undefined) return '';
+    if (valueMode === 'code_only' || !scaleLabels || !scaleLabels[score - 1]) {
+      return String(score);
+    }
+    const label = scaleLabels[score - 1];
+    return valueMode === 'label_only' ? label : `${score} - ${label}`;
+  };
+
+  const customHeaderCols: string[] = [];
+  (opts?.customQuestions || []).forEach((cq) => {
+    if (cq.type === 'likert') {
+      cq.options.forEach((rowOpt) => {
+        const rCode = (rowOpt.rowCode || `${cq.key}.${rowOpt.code}`).replace(/\./g, '_');
+        customHeaderCols.push(
+          `${rCode}_${rowOpt.label.slice(0, 20).replace(/\s+/g, '_')}`
+        );
+      });
+    } else {
+      customHeaderCols.push(`${cq.key}_${cq.title.slice(0, 24).replace(/\s+/g, '_')}`);
+    }
+  });
 
   const headers = [
     'ID',
@@ -856,7 +941,7 @@ export function exportResponsesToCsv(
     'C3_DeXuatCaiThien',
     'C3_Khac',
     'C4_GhiChuMo',
-    ...(opts?.customQuestions || []).map((cq) => `${cq.key}_${cq.title.slice(0, 24).replace(/\s+/g, '_')}`),
+    ...customHeaderCols,
   ];
 
   const escapeCsv = (val: unknown): string => {
@@ -879,16 +964,22 @@ export function exportResponsesToCsv(
         ? locObj?.name || r.locationId
         : `${r.locationId} - ${locObj?.name || ''}`;
 
-    const customCols = (opts?.customQuestions || []).map((cq) => {
-      if (cq.type === 'single' || cq.type === 'likert') {
+    const customCols: (string | number | null)[] = [];
+    (opts?.customQuestions || []).forEach((cq) => {
+      if (cq.type === 'likert') {
+        cq.options.forEach((rowOpt) => {
+          const score = getLikertRowAnswer(r, cq.key, rowOpt.code);
+          customCols.push(formatLikertScore(score, cq.likertScale));
+        });
+      } else if (cq.type === 'single') {
         const val = getSingleAnswer(r, cq.key);
-        return formatSingle(cq.key, val, cq.options);
-      }
-      if (cq.type === 'multi') {
+        customCols.push(formatSingle(cq.key, val, cq.options));
+      } else if (cq.type === 'multi') {
         const val = getMultiAnswer(r, cq.key);
-        return formatMulti(cq.key, val, cq.options);
+        customCols.push(formatMulti(cq.key, val, cq.options));
+      } else {
+        customCols.push(getTextAnswer(r, cq.key));
       }
-      return getTextAnswer(r, cq.key);
     });
 
     return [

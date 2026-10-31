@@ -231,6 +231,41 @@ const CURATED_DICTIONARY: Record<string, TranslationTuple> = {
     '满意度评价（1：非常不满意 → 5：非常满意）',
     'Уровень удовлетворенности (1: Очень плохо → 5: Очень доволен)'
   ),
+  'Yếu tố nào ảnh hưởng nhiều nhất đến quyết định mua F&B của Quý khách?': t(
+    'Which factors most influence your F&B purchase decision?',
+    'आपके खान-पान (F&B) खरीदने के निर्णय को कौन से कारक सबसे अधिक प्रभावित करते हैं?',
+    '식음료(F&B) 구매 결정에 가장 큰 영향을 미치는 요소는 무엇인가요?',
+    '哪些因素最影响您的餐饮（F&B）购买决定？',
+    'Какие факторы больше всего влияют на ваше решение о покупке еды и напитков?'
+  ),
+  'Xin Quý khách đánh giá mức độ quan trọng của các yếu tố sau khi quyết định sử dụng F&B tại Bà Nà Hills theo thang điểm từ 1 (Rất không quan trọng) đến 5 (Cực kỳ quan trọng):': t(
+    'Please rate the importance of the following factors when deciding to use F&B services at Ba Na Hills on a scale from 1 (Not important at all) to 5 (Extremely important):',
+    'कृपया बा ना हिल्स में F&B सेवाओं का उपयोग करने का निर्णय लेते समय निम्नलिखित कारकों के महत्व को 1 (बिल्कुल महत्वपूर्ण नहीं) से 5 (अत्यंत महत्वपूर्ण) के पैमाने पर आँकें:',
+    '바나힐에서 식음료(F&B) 이용을 결정하실 때 다음 요소들의 중요도를 1점(전혀 중요하지 않음)부터 5점(매우 중요함)까지 평가해 주십시오:',
+    '请按 1（非常不重要）至 5（极其重要）的等级，评估在巴拿山使用餐饮服务时以下因素的重要程度：',
+    'Пожалуйста, оцените важность следующих факторов при выборе услуг питания на Ба На Хиллс по шкале от 1 (Совсем не важно) до 5 (Чрезвычайно важно):'
+  ),
+  'Rất không quan trọng': t(
+    'Not important at all',
+    'बिल्कुल महत्वपूर्ण नहीं',
+    '전혀 중요하지 않음',
+    '非常不重要',
+    'Совсем не важно'
+  ),
+  'Không quan trọng': t(
+    'Not important',
+    'महत्वपूर्ण नहीं',
+    '중요하지 않음',
+    '不重要',
+    'Не важно'
+  ),
+  'Cực kỳ quan trọng': t(
+    'Extremely important',
+    'अत्यंत महत्वपूर्ण',
+    '매우 중요함',
+    '极其重要',
+    'Чрезвычайно важно'
+  ),
   'Mong muốn cải thiện nhất về dịch vụ F&B tại Bà Nà?': t(
     'Which time slots do you usually need F&B services at Ba Na Hills?',
     'बा ना हिल्स में आपको आमतौर पर किस समय खाने-पीने की सेवाओं की आवश्यकता होती है?',
@@ -1003,14 +1038,21 @@ const CURATED_DICTIONARY: Record<string, TranslationTuple> = {
   ),
   'Cay vừa': t('Medium spicy', 'मध्यम तीखा', '보통 매운맛', '中辣', 'Умеренно острое'),
   'Nhiều cay': t('Very spicy / Hot', 'अधिक तीखा / मसालेदार', '매운맛 선호', '重辣 / 特辣', 'Очень острое'),
-  'Không quan trọng': t(
-    'Does not matter',
-    'कोई फर्क नहीं पड़ता',
-    '상관없음',
-    '无所谓 / 不重要',
-    'Не имеет значения'
-  ),
   'Thanh nhẹ': t('Light / Mild flavor', 'हल्का स्वाद', '담백하고 순한 맛', '清淡爽口', 'Легкий / Нежный вкус'),
+  'Yếu tố ảnh hưởng (Khung SERVQUAL)': t(
+    'Influencing Factors (SERVQUAL Framework)',
+    'प्रभावित करने वाले कारक (SERVQUAL)',
+    '영향 요인 (SERVQUAL 프레임워크)',
+    '影响因素（SERVQUAL 框架）',
+    'Факторы влияния (модель SERVQUAL)'
+  ),
+  'Tiêu chí đánh giá': t(
+    'Evaluation Criteria',
+    'मूल्यांकन मानदंड',
+    '평가 항목 / 기준',
+    '评价指标 / 因素',
+    'Критерии оценки'
+  ),
   'Đậm vị': t('Rich / Bold flavor', 'गहरा / मसालेदार स्वाद', '진하고 풍부한 맛', '浓郁醇厚', 'Насыщенный / Яркий вкус'),
   'Món nóng': t('Hot dishes', 'गर्म भोजन', '따뜻한 음식', '热食 / 热饮', 'Горячие блюда'),
   'Món lạnh': t('Cold / Chilled items', 'ठंडा भोजन / पेय', '차가운 음식/음료', '冷食 / 冷饮', 'Холодные блюда / напитки'),
@@ -1119,6 +1161,48 @@ const CURATED_DICTIONARY: Record<string, TranslationTuple> = {
     '관람 동선을 따라 쉽게 찾을 수 있는 매장 위치',
     '游览路线沿途餐饮点位置显眼易找',
     'Удобное расположение точек питания по маршруту осмотра'
+  ),
+  'Tính hữu hình: Vệ sinh quầy kệ, không gian chỗ ngồi thoáng mát, sạch sẽ': t(
+    'Tangibles: Clean counters, airy and clean seating space',
+    'प्रत्यक्ष सुविधा (Tangibles): साफ काउंटर, हवादार और स्वच्छ बैठने की जगह',
+    '유형성(Tangibles): 매대 위생 상태 및 쾌적하고 깨끗한 좌석 공간',
+    '有形性：柜台卫生整洁，就餐座位宽敞干净',
+    'Материальность: Чистота прилавков, просторная и чистая посадочная зона'
+  ),
+  'Chất lượng: Hương vị món ăn ngon, hợp khẩu vị, trình bày hấp dẫn': t(
+    'Quality: Delicious taste, suits palate, appealing presentation',
+    'गुणवत्ता (Quality): स्वादिष्ट भोजन, पसंद के अनुकूल स्वाद और आकर्षक प्रस्तुति',
+    '품질(Quality): 음식 맛이 좋고 입맛에 맞으며 보기 좋게 제공됨',
+    '品质：菜品美味合口味，摆盘精致诱人',
+    'Качество: Вкусная еда, приятная подача блюд'
+  ),
+  'Sự tin cậy: Niêm yết giá công khai, an toàn vệ sinh thực phẩm': t(
+    'Reliability: Clear price listing, food safety & hygiene',
+    'विश्वसनीयता (Reliability): स्पष्ट मूल्य सूची, खाद्य सुरक्षा और स्वच्छता',
+    '신뢰성(Reliability): 명확한 가격 표시 및 식품 위생 안전성',
+    '可靠性：明码标价，食品安全卫生有保障',
+    'Надежность: Понятные ценники, безопасность и гигиена питания'
+  ),
+  'Thái độ & Phản hồi: Nhân viên thân thiện, thời gian chờ lấy món nhanh': t(
+    'Responsiveness: Friendly staff, fast serving time',
+    'व्यवहार और प्रतिक्रिया (Responsiveness): मिलनसार कर्मचारी, कम प्रतीक्षा समय',
+    '응대 및 반응성(Responsiveness): 친절한 직원 응대 및 빠른 음식 제공 속도',
+    '态度与响应：员工服务热情友好，出餐等待时间短',
+    'Отзывчивость: Дружелюбный персонал, быстрое обслуживание'
+  ),
+  'Sự thấu cảm: Có thực đơn riêng cho Trẻ em / Món chay / Khách quốc tế': t(
+    'Empathy: Dedicated menus for Kids / Vegetarian / International guests',
+    'सहानुभूति (Empathy): बच्चों / शाकाहारी / अंतर्राष्ट्रीय मेहमानों के लिए विशेष मेनू',
+    '공감성(Empathy): 어린이 / 채식 / 외국인 관광객을 위한 맞춤 메뉴 구비',
+    '同理心：提供儿童 / 素食 / 国际游客专属菜单',
+    'Эмпатия: Наличие детского, вегетарианского и международного меню'
+  ),
+  'Tiện lợi: Vị trí điểm bán dễ tìm dọc hành trình tham quan': t(
+    'Convenience: Easy-to-find outlets along the sightseeing route',
+    'सुविधा (Convenience): भ्रमण मार्ग के साथ आसानी से मिलने वाली दुकानें',
+    '편의성(Convenience): 관람 동선을 따라 쉽게 찾을 수 있는 매장 위치',
+    '便利性：游览路线沿途餐饮点位置显眼易找',
+    'Удобство: Удобное расположение точек питания по маршруту осмотра'
   ),
 
   // ==================== ĐÁP ÁN PHẦN C ====================

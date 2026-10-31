@@ -10,28 +10,31 @@ import {
   RotateCcw,
   Globe,
   CornerDownRight,
+  Check,
 } from 'lucide-react';
 import {
   SurveyResponseData,
   A5_ROWS,
   A5_COLUMNS,
   B4_ROWS,
-  B5_ITEMS,
   OptionItem,
   getSingleAnswer,
   getMultiAnswer,
   getTextAnswer,
   getOtherInputAnswer,
+  getLikertRowAnswer,
   setSingleAnswer,
   setMultiAnswer,
   setTextAnswer,
   setOtherInputAnswer,
+  setLikertRowAnswer,
 } from '../data/surveySchema';
 import {
   SurveySystemConfig,
   QuestionConfigItem,
   ConfigurableOptionItem,
-  getDefaultLikert5Options,
+  getDefaultLikertRows,
+  getLikertScaleLabels,
 } from '../services/surveyConfig';
 import {
   SurveyLanguage,
@@ -119,6 +122,9 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     Object.values(config.questions).forEach((q) => {
       if (q.title) texts.push(q.title);
       if (q.placeholder) texts.push(q.placeholder);
+      (q.likertScale || []).forEach((s) => {
+        if (s) texts.push(s);
+      });
       (q.options || []).forEach((o) => {
         if (o.label) texts.push(o.label);
       });
@@ -135,7 +141,7 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
 
   const getVisibleOpts = (q: QuestionConfigItem): ConfigurableOptionItem[] => {
     if (q.type === 'likert' && (!q.options || q.options.length === 0)) {
-      return getDefaultLikert5Options();
+      return getDefaultLikertRows(q.key);
     }
     return (q.options || []).filter((o) => !o.hidden);
   };
@@ -146,11 +152,16 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     return `${m}:${s}`;
   };
 
-  // Lấy danh sách mã đáp án đang được chọn của một câu hỏi bất kỳ (single, likert, multi)
+  // Lấy danh sách mã đáp án / dòng đang được chọn của một câu hỏi bất kỳ (single, likert, multi)
   const getSelectedCodesForQuestion = (q: QuestionConfigItem): number[] => {
-    if (q.type === 'single' || q.type === 'likert') {
+    if (q.type === 'single') {
       const val = getSingleAnswer(formData, q.key);
       return val !== null ? [val] : [];
+    }
+    if (q.type === 'likert') {
+      return getVisibleOpts(q)
+        .filter((rowOpt) => getLikertRowAnswer(formData, q.key, rowOpt.code) !== null)
+        .map((rowOpt) => rowOpt.code);
     }
     if (q.type === 'multi') {
       return getMultiAnswer(formData, q.key);
@@ -290,6 +301,16 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     setFormData((prev) => setSingleAnswer(prev, q.key, code));
   };
 
+  const handleSelectLikertRowScore = (
+    q: QuestionConfigItem,
+    rowCodeNum: number,
+    score: number
+  ) => {
+    onStartTimer();
+    setStepError(null);
+    setFormData((prev) => setLikertRowAnswer(prev, q.key, rowCodeNum, score));
+  };
+
   const handleToggleMulti = (q: QuestionConfigItem, option: OptionItem) => {
     onStartTimer();
     setStepError(null);
@@ -337,8 +358,15 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
 
   const isQuestionAnswered = (q: QuestionConfigItem): boolean => {
     if (q.required === false) return true;
-    if (q.type === 'single' || q.type === 'likert') {
+    if (q.type === 'single') {
       return getSingleAnswer(formData, q.key) !== null;
+    }
+    if (q.type === 'likert') {
+      const rows = getVisibleOpts(q);
+      return (
+        rows.length === 0 ||
+        rows.every((rOpt) => getLikertRowAnswer(formData, q.key, rOpt.code) !== null)
+      );
     }
     if (q.type === 'multi') {
       return getMultiAnswer(formData, q.key).length > 0;
@@ -357,6 +385,16 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     visited.add(q.key);
 
     if (!isQuestionAnswered(q)) {
+      if (q.type === 'likert') {
+        const missingRow = getVisibleOpts(q).find(
+          (rOpt) => getLikertRowAnswer(formData, q.key, rOpt.code) === null
+        );
+        if (missingRow) {
+          const rCode =
+            missingRow.rowCode || `${q.key.replace('_', '.')}.${missingRow.code}`;
+          return `Vui lòng đánh giá đầy đủ các dòng trong câu "${q.title}" (chưa chọn mức điểm cho dòng ${rCode}).`;
+        }
+      }
       return `Vui lòng trả lời câu "${q.title}".`;
     }
 
@@ -559,8 +597,26 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
           )}
 
           <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 space-y-1">
               {renderBilingualQuestionTitle(q.title, q.enTitle)}
+              {q.type === 'likert' && q.placeholder && (
+                <div className="pt-0.5">
+                  {isForeignLang ? (
+                    <div className="space-y-0.5">
+                      <div className="text-xs italic font-medium text-slate-700 leading-snug">
+                        {translateVi(q.placeholder, selectedLang)}
+                      </div>
+                      <div className="text-[11px] italic text-slate-500 leading-snug">
+                        {q.placeholder}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs italic text-slate-600 leading-snug">
+                      {q.placeholder}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             {q.type === 'multi' && (
               <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-semibold shrink-0">
@@ -569,7 +625,7 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
             )}
             {q.type === 'likert' && (
               <span className="px-2 py-0.5 rounded-md bg-red-50 text-[#d12f2f] border border-red-200 text-[11px] font-semibold shrink-0">
-                Thang 1–5
+                Likert 1–5 ({opts.length} dòng)
               </span>
             )}
           </div>
@@ -592,47 +648,137 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
               />
             </div>
           ) : q.type === 'likert' ? (
-            /* Giao diện Thang đo Likert 5 mức (1 → 5) Song ngữ */
-            <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
-              {opts.map((opt) => {
-                const active = selectedCodes.includes(opt.code);
-                const primaryLabel = isForeignLang
-                  ? translateVi(opt.label, selectedLang, opt.en)
-                  : opt.label;
-                return (
-                  <button
-                    key={opt.code}
-                    type="button"
-                    onClick={() => handleSelectSingle(q, opt.code)}
-                    className={`p-2.5 rounded-xl border text-left sm:text-center transition flex sm:flex-col items-center gap-2.5 sm:gap-1.5 cursor-pointer ${
-                      active
-                        ? 'bg-red-50 border-[#d12f2f] text-slate-950 shadow-2xs ring-1 ring-[#d12f2f]'
-                        : 'bg-slate-50/80 border-slate-200/90 text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    <span
-                      className={`w-7 h-7 rounded-full text-xs font-extrabold flex items-center justify-center shrink-0 transition ${
-                        active
-                          ? 'bg-[#d12f2f] text-white'
-                          : 'bg-white border border-slate-300 text-slate-700'
-                      }`}
-                    >
-                      {opt.code}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-slate-900 leading-snug">
-                        {primaryLabel}
-                      </div>
-                      {isForeignLang && (
-                        <div className="text-[11px] text-slate-500 leading-tight mt-0.5">
-                          {opt.label}
-                        </div>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            /* Giao diện Bảng ma trận Likert 5 mức nhiều dòng câu hỏi (STT | Tiêu chí | 1..5) */
+            (() => {
+              const scaleLabels = getLikertScaleLabels(q);
+              return (
+                <div className="overflow-x-auto -mx-1 px-1">
+                  <table className="w-full border-collapse border border-slate-300 text-xs min-w-[640px] rounded-xl overflow-hidden">
+                    <thead>
+                      <tr className="bg-slate-100 text-slate-800">
+                        <th className="border border-slate-300 px-2.5 py-2 text-center font-bold w-14">
+                          STT
+                        </th>
+                        <th className="border border-slate-300 px-3 py-2 text-left font-bold min-w-[220px]">
+                          {isForeignLang ? (
+                            <div>
+                              <div className="text-slate-900 font-bold">
+                                {translateVi(
+                                  q.key === 'B5'
+                                    ? 'Yếu tố ảnh hưởng (Khung SERVQUAL)'
+                                    : 'Tiêu chí đánh giá',
+                                  selectedLang
+                                )}
+                              </div>
+                              <div className="text-[11px] font-normal text-slate-500">
+                                {q.key === 'B5'
+                                  ? 'Yếu tố ảnh hưởng (Khung SERVQUAL)'
+                                  : 'Tiêu chí đánh giá'}
+                              </div>
+                            </div>
+                          ) : q.key === 'B5' ? (
+                            'Yếu tố ảnh hưởng (Khung SERVQUAL)'
+                          ) : (
+                            'Tiêu chí đánh giá'
+                          )}
+                        </th>
+                        {scaleLabels.map((sLabel, sIdx) => {
+                          const scoreNum = sIdx + 1;
+                          const translatedScale = isForeignLang
+                            ? translateVi(sLabel, selectedLang)
+                            : sLabel;
+                          return (
+                            <th
+                              key={scoreNum}
+                              className="border border-slate-300 px-2 py-2 text-center font-bold w-24 align-top"
+                            >
+                              <div className="text-slate-900 leading-tight">
+                                {scoreNum} - {translatedScale}
+                              </div>
+                              {isForeignLang && (
+                                <div className="text-[10px] font-normal text-slate-500 leading-tight mt-0.5">
+                                  {scoreNum} - {sLabel}
+                                </div>
+                              )}
+                            </th>
+                          );
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {opts.map((rowOpt) => {
+                        const currentScore = getLikertRowAnswer(
+                          formData,
+                          q.key,
+                          rowOpt.code
+                        );
+                        const displayRowCode =
+                          rowOpt.rowCode ||
+                          `${q.key.replace('_', '.')}.${rowOpt.code}`;
+                        const primaryRowLabel = isForeignLang
+                          ? translateVi(rowOpt.label, selectedLang, rowOpt.en)
+                          : rowOpt.label;
+
+                        return (
+                          <tr
+                            key={rowOpt.code}
+                            className={`transition ${
+                              currentScore !== null
+                                ? 'bg-red-50/20 hover:bg-red-50/40'
+                                : 'bg-white hover:bg-slate-50'
+                            }`}
+                          >
+                            <td className="border border-slate-300 px-2 py-2.5 text-center font-mono font-bold text-slate-800 align-middle">
+                              {displayRowCode}
+                            </td>
+                            <td className="border border-slate-300 px-3 py-2.5 align-middle">
+                              <div className="text-[13px] font-semibold text-slate-900 leading-snug">
+                                {primaryRowLabel}
+                              </div>
+                              {isForeignLang && (
+                                <div className="text-[11px] text-slate-500 leading-snug mt-0.5">
+                                  {rowOpt.label}
+                                </div>
+                              )}
+                            </td>
+                            {[1, 2, 3, 4, 5].map((score) => {
+                              const active = currentScore === score;
+                              return (
+                                <td
+                                  key={score}
+                                  onClick={() =>
+                                    handleSelectLikertRowScore(q, rowOpt.code, score)
+                                  }
+                                  className={`border border-slate-300 p-1.5 text-center align-middle cursor-pointer select-none transition ${
+                                    active ? 'bg-red-50/80' : 'hover:bg-slate-100/80'
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSelectLikertRowScore(q, rowOpt.code, score);
+                                    }}
+                                    className={`w-7 h-7 mx-auto rounded-md border flex items-center justify-center text-xs font-bold transition cursor-pointer ${
+                                      active
+                                        ? 'bg-[#d12f2f] border-[#d12f2f] text-white shadow-2xs scale-105'
+                                        : 'bg-white border-slate-400 text-slate-500 hover:border-[#d12f2f]'
+                                    }`}
+                                    title={`${displayRowCode}: Mức ${score} (${scaleLabels[score - 1] || score})`}
+                                  >
+                                    {active ? <Check className="w-4 h-4 stroke-[2.5]" /> : score}
+                                  </button>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {opts.map((opt) => {
@@ -734,6 +880,74 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
                           }`}
                         >
                           {col.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Bảng B4 hiển thị ngay sau câu B3.3 (trước câu B5 Likert nhiều dòng) */}
+        {q.key === 'B3_3' && safeStep === 3 && (
+          <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
+            {renderBilingualQuestionTitle(
+              'B4. Cảm nhận mức giá hiện tại (1: Đắt • 2: Hợp lý • 3: Rẻ)',
+              'B4. Perception of current price levels (1: Expensive • 2: Reasonable • 3: Cheap)'
+            )}
+            <div className="space-y-2">
+              {B4_ROWS.map((row) => (
+                <div
+                  key={row.key}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/70"
+                >
+                  <div>
+                    {isForeignLang ? (
+                      <>
+                        <div className="text-xs font-bold text-slate-900">
+                          {translateVi(row.label, selectedLang, row.en)}
+                        </div>
+                        <div className="text-[11px] text-slate-500">{row.label}</div>
+                      </>
+                    ) : (
+                      <span className="text-xs font-medium text-slate-800">{row.label}</span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 shrink-0">
+                    {[
+                      { code: 1, label: '1. Đắt' },
+                      { code: 2, label: '2. Hợp lý' },
+                      { code: 3, label: '3. Rẻ' },
+                    ].map((opt) => {
+                      const active = formData.B4[row.key] === opt.code;
+                      const primaryOpt = isForeignLang
+                        ? translateVi(opt.label, selectedLang)
+                        : opt.label;
+                      return (
+                        <button
+                          key={opt.code}
+                          type="button"
+                          onClick={() =>
+                            updateField('B4', { ...formData.B4, [row.key]: opt.code })
+                          }
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                            active
+                              ? 'bg-[#d12f2f] text-white border-[#d12f2f]'
+                              : 'bg-white text-slate-700 border-slate-200'
+                          }`}
+                        >
+                          <div>{primaryOpt}</div>
+                          {isForeignLang && (
+                            <div
+                              className={`text-[10px] ${
+                                active ? 'text-red-100' : 'text-slate-400'
+                              }`}
+                            >
+                              {opt.label}
+                            </div>
+                          )}
                         </button>
                       );
                     })}
@@ -869,127 +1083,6 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
       <div className="space-y-3">
         {stepQuestions.map((q) => renderQuestionBlock(q))}
       </div>
-
-      {/* Bảng B4 & B5 ở Bước 3 (PHẦN B) */}
-      {safeStep === 3 && (
-        <div className="space-y-3">
-          <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
-            {renderBilingualQuestionTitle(
-              'B4. Cảm nhận mức giá hiện tại (1: Đắt • 2: Hợp lý • 3: Rẻ)',
-              'B4. Perception of current price levels (1: Expensive • 2: Reasonable • 3: Cheap)'
-            )}
-            <div className="space-y-2">
-              {B4_ROWS.map((row) => (
-                <div
-                  key={row.key}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/70"
-                >
-                  <div>
-                    {isForeignLang ? (
-                      <>
-                        <div className="text-xs font-bold text-slate-900">
-                          {translateVi(row.label, selectedLang, row.en)}
-                        </div>
-                        <div className="text-[11px] text-slate-500">{row.label}</div>
-                      </>
-                    ) : (
-                      <span className="text-xs font-medium text-slate-800">{row.label}</span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5 shrink-0">
-                    {[
-                      { code: 1, label: '1. Đắt' },
-                      { code: 2, label: '2. Hợp lý' },
-                      { code: 3, label: '3. Rẻ' },
-                    ].map((opt) => {
-                      const active = formData.B4[row.key] === opt.code;
-                      const primaryOpt = isForeignLang
-                        ? translateVi(opt.label, selectedLang)
-                        : opt.label;
-                      return (
-                        <button
-                          key={opt.code}
-                          type="button"
-                          onClick={() =>
-                            updateField('B4', { ...formData.B4, [row.key]: opt.code })
-                          }
-                          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
-                            active
-                              ? 'bg-[#d12f2f] text-white border-[#d12f2f]'
-                              : 'bg-white text-slate-700 border-slate-200'
-                          }`}
-                        >
-                          <div>{primaryOpt}</div>
-                          {isForeignLang && (
-                            <div
-                              className={`text-[10px] ${
-                                active ? 'text-red-100' : 'text-slate-400'
-                              }`}
-                            >
-                              {opt.label}
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {!isNotUsedFnB && (
-            <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
-              {renderBilingualQuestionTitle(
-                'B5. Mức độ hài lòng (1: Rất tệ → 5: Rất hài lòng)',
-                'B5. Satisfaction level (1: Very Dissatisfied → 5: Very Satisfied)'
-              )}
-              <div className="space-y-2">
-                {B5_ITEMS.map((item) => (
-                  <div
-                    key={item.key}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/70"
-                  >
-                    <div className="min-w-0 flex-1">
-                      {isForeignLang ? (
-                        <>
-                          <div className="text-xs font-bold text-slate-900">
-                            {translateVi(item.label, selectedLang, item.en)}
-                          </div>
-                          <div className="text-[11px] text-slate-500">{item.label}</div>
-                        </>
-                      ) : (
-                        <span className="text-xs font-medium text-slate-800">{item.label}</span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {[1, 2, 3, 4, 5].map((score) => {
-                        const active = formData.B5[item.key] === score;
-                        return (
-                          <button
-                            key={score}
-                            type="button"
-                            onClick={() =>
-                              updateField('B5', { ...formData.B5, [item.key]: score })
-                            }
-                            className={`w-9 h-8 rounded-lg text-xs font-bold border transition cursor-pointer ${
-                              active
-                                ? 'bg-[#d12f2f] text-white border-[#d12f2f]'
-                                : 'bg-white text-slate-700 border-slate-200'
-                            }`}
-                          >
-                            {score}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Ghi chú mở & Chọn quà tặng ở Bước 4 (PHẦN C) */}
       {safeStep === 4 && (

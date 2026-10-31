@@ -27,6 +27,7 @@ import {
   B3_1_OPTIONS,
   B3_2_OPTIONS,
   B3_3_OPTIONS,
+  B5_ITEMS,
   C1_OPTIONS,
   C2_OPTIONS,
   C3_OPTIONS,
@@ -42,63 +43,99 @@ export type QuestionInputType = 'single' | 'multi' | 'likert' | 'text';
 export interface LikertPreset {
   id: string;
   name: string;
-  options: ConfigurableOptionItem[];
+  scaleLabels: string[];
+  instruction: string;
 }
 
 export const LIKERT_5_PRESETS: LikertPreset[] = [
   {
+    id: 'importance',
+    name: 'Mức độ quan trọng (1: Rất không quan trọng → 5: Cực kỳ quan trọng)',
+    scaleLabels: [
+      'Rất không quan trọng',
+      'Không quan trọng',
+      'Bình thường',
+      'Quan trọng',
+      'Cực kỳ quan trọng',
+    ],
+    instruction:
+      'Xin Quý khách đánh giá mức độ quan trọng của các yếu tố sau theo thang điểm từ 1 (Rất không quan trọng) đến 5 (Cực kỳ quan trọng):',
+  },
+  {
     id: 'satisfaction',
     name: 'Mức độ hài lòng (1: Rất không hài lòng → 5: Rất hài lòng)',
-    options: [
-      { code: 1, label: 'Rất không hài lòng', en: 'Very dissatisfied' },
-      { code: 2, label: 'Không hài lòng', en: 'Dissatisfied' },
-      { code: 3, label: 'Bình thường', en: 'Neutral' },
-      { code: 4, label: 'Hài lòng', en: 'Satisfied' },
-      { code: 5, label: 'Rất hài lòng', en: 'Very satisfied' },
+    scaleLabels: [
+      'Rất không hài lòng',
+      'Không hài lòng',
+      'Bình thường',
+      'Hài lòng',
+      'Rất hài lòng',
     ],
+    instruction:
+      'Xin Quý khách đánh giá mức độ hài lòng đối với từng tiêu chí sau theo thang điểm từ 1 (Rất không hài lòng) đến 5 (Rất hài lòng):',
   },
   {
     id: 'agreement',
     name: 'Mức độ đồng ý (1: Hoàn toàn không đồng ý → 5: Hoàn toàn đồng ý)',
-    options: [
-      { code: 1, label: 'Hoàn toàn không đồng ý', en: 'Strongly disagree' },
-      { code: 2, label: 'Không đồng ý', en: 'Disagree' },
-      { code: 3, label: 'Trung lập / Phân vân', en: 'Neutral' },
-      { code: 4, label: 'Đồng ý', en: 'Agree' },
-      { code: 5, label: 'Hoàn toàn đồng ý', en: 'Strongly agree' },
+    scaleLabels: [
+      'Hoàn toàn không đồng ý',
+      'Không đồng ý',
+      'Bình thường',
+      'Đồng ý',
+      'Hoàn toàn đồng ý',
     ],
-  },
-  {
-    id: 'importance',
-    name: 'Mức độ quan trọng (1: Không quan trọng → 5: Rất quan trọng)',
-    options: [
-      { code: 1, label: 'Hoàn toàn không quan trọng', en: 'Not important at all' },
-      { code: 2, label: 'Ít quan trọng', en: 'Slightly important' },
-      { code: 3, label: 'Bình thường', en: 'Neutral' },
-      { code: 4, label: 'Quan trọng', en: 'Important' },
-      { code: 5, label: 'Rất quan trọng', en: 'Very important' },
-    ],
+    instruction:
+      'Xin Quý khách cho biết mức độ đồng ý với các nhận định sau theo thang điểm từ 1 (Hoàn toàn không đồng ý) đến 5 (Hoàn toàn đồng ý):',
   },
   {
     id: 'quality',
     name: 'Đánh giá chất lượng (1: Rất kém → 5: Rất tốt)',
-    options: [
-      { code: 1, label: 'Rất kém', en: 'Very poor' },
-      { code: 2, label: 'Kém', en: 'Poor' },
-      { code: 3, label: 'Trung bình', en: 'Average' },
-      { code: 4, label: 'Tốt', en: 'Good' },
-      { code: 5, label: 'Rất tốt', en: 'Very good' },
-    ],
+    scaleLabels: ['Rất kém', 'Kém', 'Trung bình', 'Tốt', 'Rất tốt'],
+    instruction:
+      'Xin Quý khách đánh giá chất lượng các yếu tố sau theo thang điểm từ 1 (Rất kém) đến 5 (Rất tốt):',
   },
 ];
 
-export function getDefaultLikert5Options(): ConfigurableOptionItem[] {
-  return LIKERT_5_PRESETS[0].options.map((o) => ({ ...o }));
+export function getDefaultLikertScaleLabels(): string[] {
+  return [...LIKERT_5_PRESETS[0].scaleLabels];
+}
+
+export function getDefaultLikertRows(qKey = 'Q'): ConfigurableOptionItem[] {
+  const cleanPrefix = qKey.replace('_', '.');
+  return [
+    {
+      code: 1,
+      rowCode: `${cleanPrefix}.1`,
+      label: 'Tiêu chí đánh giá 1',
+      en: 'Evaluation criterion 1',
+    },
+    {
+      code: 2,
+      rowCode: `${cleanPrefix}.2`,
+      label: 'Tiêu chí đánh giá 2',
+      en: 'Evaluation criterion 2',
+    },
+    {
+      code: 3,
+      rowCode: `${cleanPrefix}.3`,
+      label: 'Tiêu chí đánh giá 3',
+      en: 'Evaluation criterion 3',
+    },
+  ];
+}
+
+export function getLikertScaleLabels(q: QuestionConfigItem): string[] {
+  if (Array.isArray(q.likertScale) && q.likertScale.length === 5) {
+    return q.likertScale;
+  }
+  return getDefaultLikertScaleLabels();
 }
 
 export interface ConfigurableOptionItem extends OptionItem {
+  /** Mã dòng hiển thị trong bảng Likert nhiều dòng (VD: B5.1, B5.2...) */
+  rowCode?: string;
   hidden?: boolean;
-  /** Mã câu hỏi con sẽ mở ra khi đáp viên chọn đáp án này */
+  /** Mã câu hỏi con sẽ mở ra khi đáp viên chọn đáp án/dòng này */
   subQuestionKey?: string;
 }
 
@@ -117,11 +154,14 @@ export interface QuestionConfigItem {
   enTitle: string;
   maxSelect?: number;
   placeholder?: string;
+  /** Nhãn 5 mức độ của cột thang đo Likert (Mức 1 -> Mức 5) */
+  likertScale?: string[];
   required?: boolean;
   hidden?: boolean;
   isCustom?: boolean;
   /** Cấu hình câu hỏi con: chỉ hiện khi câu hỏi cha chọn 1 trong các đáp án xác định */
   parentInfo?: ParentConditionInfo | null;
+  /** Danh sách đáp án (với single/multi) hoặc Danh sách các dòng câu hỏi đánh giá (với likert) */
   options: ConfigurableOptionItem[];
 }
 
@@ -176,13 +216,23 @@ export const DEFAULT_QUESTION_ORDER: string[] = [
   'B3_1',
   'B3_2',
   'B3_3',
+  'B5',
   'C1',
   'C2',
   'C3',
 ];
 
+const LEGACY_SCALE_FIRST_LABELS = new Set([
+  'Rất không hài lòng',
+  'Hoàn toàn không đồng ý',
+  'Hoàn toàn không quan trọng',
+  'Rất không quan trọng',
+  'Rất kém',
+]);
+
 /**
- * Đồng bộ 2 chiều giữa `option.subQuestionKey` của câu hỏi cha và `parentInfo` của câu hỏi con
+ * Đồng bộ 2 chiều giữa `option.subQuestionKey` của câu hỏi cha và `parentInfo` của câu hỏi con,
+ * đồng thời chuẩn hóa cấu trúc câu hỏi Likert nhiều dòng (5 mức cột + danh sách các dòng câu hỏi).
  */
 export function normalizeQuestionLinks(
   questions: Record<string, QuestionConfigItem>,
@@ -191,9 +241,51 @@ export function normalizeQuestionLinks(
   const next: Record<string, QuestionConfigItem> = {};
   Object.keys(questions).forEach((k) => {
     const q = questions[k];
+    let nextScale =
+      Array.isArray(q.likertScale) && q.likertScale.length === 5
+        ? [...q.likertScale]
+        : undefined;
+    let nextOpts = Array.isArray(q.options) ? q.options.map((o) => ({ ...o })) : [];
+
+    if (q.type === 'likert') {
+      // Nếu câu hỏi Likert cũ từng lưu 5 mức độ vào `options` và chưa có `likertScale` -> tự động chuyển 5 mức sang `likertScale` và tạo các dòng câu hỏi
+      const looksLikeLegacyScaleInOptions =
+        !nextScale &&
+        nextOpts.length === 5 &&
+        !nextOpts[0]?.rowCode &&
+        LEGACY_SCALE_FIRST_LABELS.has(nextOpts[0]?.label?.trim() || '');
+
+      if (looksLikeLegacyScaleInOptions) {
+        nextScale = nextOpts.map((o) => o.label);
+        nextOpts =
+          k === 'B5'
+            ? B5_ITEMS.map((item, idx) => ({
+                code: idx + 1,
+                rowCode: item.code,
+                label: `${item.dimension}: ${item.label}`,
+                en: item.en,
+              }))
+            : getDefaultLikertRows(k);
+      } else {
+        if (!nextScale) {
+          nextScale = getDefaultLikertScaleLabels();
+        }
+        if (nextOpts.length === 0) {
+          nextOpts = getDefaultLikertRows(k);
+        }
+      }
+
+      nextOpts = nextOpts.map((o, idx) => ({
+        ...o,
+        code: o.code || idx + 1,
+        rowCode: o.rowCode || `${k.replace('_', '.')}.${idx + 1}`,
+      }));
+    }
+
     next[k] = {
       ...q,
-      options: Array.isArray(q.options) ? q.options.map((o) => ({ ...o })) : [],
+      ...(nextScale ? { likertScale: nextScale } : {}),
+      options: nextOpts,
     };
   });
 
@@ -540,6 +632,29 @@ export function getDefaultSurveyConfig(): SurveySystemConfig {
       enTitle: 'Maximum acceptable waiting time?',
       options: B3_3_OPTIONS.map((o) => ({ ...o })),
     },
+    B5: {
+      key: 'B5',
+      section: 'PHẦN B',
+      type: 'likert',
+      required: true,
+      title: 'B5. Yếu tố nào ảnh hưởng nhiều nhất đến quyết định mua F&B của Quý khách?',
+      enTitle: 'B5. Which factors most influence your F&B purchase decision?',
+      placeholder:
+        'Xin Quý khách đánh giá mức độ quan trọng của các yếu tố sau khi quyết định sử dụng F&B tại Bà Nà Hills theo thang điểm từ 1 (Rất không quan trọng) đến 5 (Cực kỳ quan trọng):',
+      likertScale: [
+        'Rất không quan trọng',
+        'Không quan trọng',
+        'Bình thường',
+        'Quan trọng',
+        'Cực kỳ quan trọng',
+      ],
+      options: B5_ITEMS.map((item, idx) => ({
+        code: idx + 1,
+        rowCode: item.code,
+        label: `${item.dimension}: ${item.label}`,
+        en: item.en,
+      })),
+    },
     C1: {
       key: 'C1',
       section: 'PHẦN C',
@@ -644,6 +759,13 @@ export function mergeWithDefaultConfig(
   });
   Object.keys(mergedQuestions).forEach((k) => {
     if (!deletedSet.has(k) && !finalOrder.includes(k)) {
+      if (k === 'B5') {
+        const b33Idx = finalOrder.indexOf('B3_3');
+        if (b33Idx !== -1) {
+          finalOrder.splice(b33Idx + 1, 0, 'B5');
+          return;
+        }
+      }
       finalOrder.push(k);
     }
   });
