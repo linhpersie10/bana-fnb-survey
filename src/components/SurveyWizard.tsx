@@ -751,59 +751,46 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
 
   return (
     <div className="space-y-3.5 pb-16">
-      {/* Thanh điều khiển Điểm trực + Bộ chọn Ngôn ngữ Song ngữ (Anh / Ấn / Hàn / Trung / Nga + Tiếng Việt tham chiếu) */}
-      <div className="bg-white rounded-2xl p-3 border border-slate-200/90 space-y-2.5 shadow-2xs">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <MapPin className="w-4 h-4 text-[#d12f2f] shrink-0" />
-            <select
-              value={formData.locationId}
-              onChange={(e) => updateField('locationId', Number(e.target.value))}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800"
-            >
-              {activeLocations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
-              ))}
-            </select>
-            <span className="text-xs font-mono font-semibold text-slate-500 hidden sm:inline">
-              #{formData.surveyCode}
-            </span>
-          </div>
-
-          <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-mono text-xs font-semibold inline-flex items-center gap-1">
-            <Clock className="w-3.5 h-3.5 text-slate-500" />
-            {formatTimer(elapsedSeconds)}
+      {/* Thanh điều khiển Điểm trực + Đồng hồ + Dropbox chọn Ngôn ngữ ở góc trên bên phải */}
+      <div className="bg-white rounded-2xl p-3 border border-slate-200/90 flex flex-wrap items-center justify-between gap-2 shadow-2xs">
+        <div className="flex items-center gap-2">
+          <MapPin className="w-4 h-4 text-[#d12f2f] shrink-0" />
+          <select
+            value={formData.locationId}
+            onChange={(e) => updateField('locationId', Number(e.target.value))}
+            className="px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800 focus:outline-none focus:border-slate-400"
+          >
+            {activeLocations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs font-mono font-semibold text-slate-500 hidden sm:inline">
+            #{formData.surveyCode}
           </span>
         </div>
 
-        {/* Bộ chọn Ngôn ngữ hiển thị chính (kèm Tiếng Việt luôn hiển thị bên dưới) */}
-        <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] font-semibold text-slate-500 inline-flex items-center gap-1">
-            <Globe className="w-3.5 h-3.5 text-[#d12f2f]" />
-            Ngôn ngữ khách (Kèm Tiếng Việt bên dưới):
+        <div className="flex items-center gap-2">
+          <span className="px-2.5 py-1.5 rounded-xl bg-slate-100 text-slate-700 font-mono text-xs font-semibold inline-flex items-center gap-1">
+            <Clock className="w-3.5 h-3.5 text-slate-500" />
+            {formatTimer(elapsedSeconds)}
           </span>
 
-          <div className="flex flex-wrap items-center gap-1">
-            {SURVEY_LANGUAGES.map((lang) => {
-              const active = selectedLang === lang.code;
-              return (
-                <button
-                  key={lang.code}
-                  type="button"
-                  onClick={() => setSelectedLang(lang.code)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold inline-flex items-center gap-1 border transition cursor-pointer ${
-                    active
-                      ? 'bg-[#d12f2f] text-white border-[#d12f2f] shadow-2xs'
-                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  <span>{lang.flag}</span>
-                  <span>{lang.nameVi.replace('Tiếng ', '')}</span>
-                </button>
-              );
-            })}
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-red-50/70 border border-red-200">
+            <Globe className="w-3.5 h-3.5 text-[#d12f2f] shrink-0" />
+            <select
+              value={selectedLang}
+              onChange={(e) => setSelectedLang(e.target.value as SurveyLanguage)}
+              title="Chọn ngôn ngữ hiển thị chính (kèm Tiếng Việt bên dưới)"
+              className="bg-transparent text-xs font-bold text-slate-900 focus:outline-none cursor-pointer pr-1"
+            >
+              {SURVEY_LANGUAGES.map((lang) => (
+                <option key={lang.code} value={lang.code}>
+                  {lang.flag} {lang.nameVi} ({lang.shortLabel})
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
