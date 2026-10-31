@@ -25,10 +25,16 @@ import {
   QuestionInputType,
   QuestionConfigItem,
   ConfigurableOptionItem,
+  LIKERT_5_PRESETS,
+  getDefaultLikert5Options,
   getDefaultSurveyConfig,
   normalizeQuestionLinks,
   saveSurveyConfigToCloud,
 } from '../services/surveyConfig';
+import {
+  SURVEY_LANGUAGES,
+  prewarmSurveyTranslations,
+} from '../services/autoTranslate';
 
 interface SystemSettingsProps {
   config: SurveySystemConfig;
@@ -67,8 +73,8 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
   const [newQSection, setNewQSection] = useState<SurveySection>('PHẦN S');
   const [newQBranch, setNewQBranch] = useState<'A1_A2' | 'A_NOT_USED' | 'A_USED' | 'ALL'>('ALL');
   const [newQType, setNewQType] = useState<QuestionInputType>('single');
+  const [newQLikertPreset, setNewQLikertPreset] = useState<string>('satisfaction');
   const [newQTitle, setNewQTitle] = useState('');
-  const [newQEnTitle, setNewQEnTitle] = useState('');
   const [newQParentKey, setNewQParentKey] = useState<string>('');
   const [newQTriggerCodes, setNewQTriggerCodes] = useState<number[]>([]);
   const [addQError, setAddQError] = useState<string | null>(null);
@@ -88,6 +94,20 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         ...nextDraft,
         questions: normalizeQuestionLinks(nextDraft.questions, nextDraft.questionOrder),
       };
+      // Tự động kích hoạt dịch ngầm sang 5 ngôn ngữ (Anh / Ấn / Hàn / Trung / Nga) cho mọi câu hỏi & đáp án mới
+      const allViTexts: string[] = [];
+      Object.values(synced.questions).forEach((q) => {
+        if (q.title) allViTexts.push(q.title);
+        (q.options || []).forEach((o) => {
+          if (o.label) allViTexts.push(o.label);
+        });
+      });
+      SURVEY_LANGUAGES.forEach((lang) => {
+        if (lang.code !== 'vi') {
+          prewarmSurveyTranslations(allViTexts, lang.code);
+        }
+      });
+
       await saveSurveyConfigToCloud(synced, actorEmail);
       onConfigSaved(synced);
       setSavedToast(true);
@@ -221,8 +241,8 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
     );
     setNewQKey(suggestedKey);
     setNewQType('single');
+    setNewQLikertPreset('satisfaction');
     setNewQTitle(`${suggestedKey}. Nội dung câu hỏi mới`);
-    setNewQEnTitle('New question');
     setNewQParentKey(presetParentKey || '');
     setNewQTriggerCodes(presetOptCode !== undefined ? [presetOptCode] : []);
     setAddQError(null);
@@ -236,7 +256,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
       .toUpperCase()
       .replace(/[^A-Z0-9_]/g, '_');
     if (!cleanKey) {
-      setAddQError('Vui lòng nhập mã câu hỏi (VD: S10, A9, A2_1).');
+      setAddQError('Vui lòng nhập mã câu hỏi (VD: S10, A9, B6).');
       return;
     }
     if (draft.questions[cleanKey]) {
@@ -248,13 +268,16 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
       return;
     }
 
+    const likertPresetObj =
+      LIKERT_5_PRESETS.find((p) => p.id === newQLikertPreset) || LIKERT_5_PRESETS[0];
+
     const createdItem: QuestionConfigItem = {
       key: cleanKey,
       section: newQSection,
       branch: newQSection === 'PHẦN A' ? newQBranch : undefined,
       type: newQType,
       title: newQTitle.trim(),
-      enTitle: newQEnTitle.trim() || newQTitle.trim(),
+      enTitle: newQTitle.trim(),
       maxSelect: newQType === 'multi' ? 2 : 0,
       placeholder:
         newQType === 'text' ? 'Nhập câu trả lời của du khách...' : undefined,
@@ -271,9 +294,11 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
       options:
         newQType === 'text'
           ? []
+          : newQType === 'likert'
+          ? likertPresetObj.options.map((o) => ({ ...o }))
           : [
-              { code: 1, label: 'Lựa chọn 1', en: 'Option 1' },
-              { code: 2, label: 'Lựa chọn 2', en: 'Option 2' },
+              { code: 1, label: 'Lựa chọn 1', en: 'Lựa chọn 1' },
+              { code: 2, label: 'Lựa chọn 2', en: 'Lựa chọn 2' },
             ],
     };
 
@@ -391,13 +416,23 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         ...current,
         ...patch,
       };
-      if (
+      if (patch.type === 'likert') {
+        // Đảm bảo câu hỏi Likert luôn có đúng 5 mức (1..5)
+        if (updated.options.length !== 5) {
+          updated.options = getDefaultLikert5Options();
+        } else {
+          updated.options = updated.options.map((o, i) => ({
+            ...o,
+            code: i + 1,
+          }));
+        }
+      } else if (
         (updated.type === 'single' || updated.type === 'multi') &&
         updated.options.length === 0
       ) {
         updated.options = [
-          { code: 1, label: 'Lựa chọn 1', en: 'Option 1' },
-          { code: 2, label: 'Lựa chọn 2', en: 'Option 2' },
+          { code: 1, label: 'Lựa chọn 1', en: 'Lựa chọn 1' },
+          { code: 2, label: 'Lựa chọn 2', en: 'Lựa chọn 2' },
         ];
       }
       return {
@@ -408,6 +443,32 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
         },
       };
     }, autoSaveCloud);
+  };
+
+  const applyLikertPresetToCurrentQuestion = (presetId: string) => {
+    if (!activeQ) return;
+    const found = LIKERT_5_PRESETS.find((p) => p.id === presetId);
+    if (!found) return;
+    applyDraftWithSync((prev) => {
+      const cur = prev.questions[activeQ.key];
+      if (!cur) return prev;
+      // Giữ nguyên liên kết câu hỏi con (subQuestionKey) trên từng mức nếu có
+      const nextOpts = found.options.map((presetOpt, idx) => ({
+        ...presetOpt,
+        subQuestionKey: cur.options[idx]?.subQuestionKey,
+      }));
+      return {
+        ...prev,
+        questions: {
+          ...prev.questions,
+          [activeQ.key]: {
+            ...cur,
+            type: 'likert',
+            options: nextOpts,
+          },
+        },
+      };
+    }, true);
   };
 
   const setChildParentLink = (parentKey: string | null, triggerCodes: number[]) => {
@@ -555,7 +616,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
       (q) =>
         q &&
         q.key !== activeQ?.key &&
-        (q.type === 'single' || q.type === 'multi') &&
+        (q.type === 'single' || q.type === 'multi' || q.type === 'likert') &&
         q.options.length > 0
     );
 
@@ -744,7 +805,11 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                     </div>
 
                     <span className="text-[10px] font-semibold text-slate-400 shrink-0 mt-0.5">
-                      {q.type === 'text' ? 'Tự luận' : `${q.options.length}`}
+                      {q.type === 'text'
+                        ? 'Tự luận'
+                        : q.type === 'likert'
+                        ? 'Likert 5'
+                        : `${q.options.length}`}
                     </span>
                   </button>
                 );
@@ -783,6 +848,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                       [
                         { id: 'single', label: 'Chọn 1' },
                         { id: 'multi', label: 'Chọn nhiều' },
+                        { id: 'likert', label: 'Likert (5 mức)' },
                         { id: 'text', label: 'Tự luận' },
                       ] as const
                     ).map((t) => (
@@ -998,36 +1064,23 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   </div>
                 )}
 
-                {/* 3. Tiêu đề câu hỏi (Full-width 100% để không bao giờ bị cắt chữ) */}
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-500 block mb-1">
-                      Nội dung câu hỏi (Tiếng Việt)
-                    </label>
-                    <input
-                      type="text"
-                      value={activeQ.title}
-                      onChange={(e) => updateQuestionMeta({ title: e.target.value })}
-                      onBlur={() => void handleSaveAll()}
-                      className="w-full px-3.5 py-2 rounded-xl bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#d12f2f] text-sm font-semibold text-slate-900 focus:outline-none transition"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-400 block mb-1">
-                      Bản dịch Tiếng Anh (English Subtitle)
-                    </label>
-                    <input
-                      type="text"
-                      value={activeQ.enTitle}
-                      onChange={(e) => updateQuestionMeta({ enTitle: e.target.value })}
-                      onBlur={() => void handleSaveAll()}
-                      className="w-full px-3.5 py-1.5 rounded-xl bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-slate-400 text-xs text-slate-600 focus:outline-none transition"
-                    />
-                  </div>
+                {/* 3. Tiêu đề câu hỏi (Chỉ nhập Tiếng Việt — hệ thống tự động dịch sang Anh/Ấn/Hàn/Trung/Nga) */}
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-500 block mb-1">
+                    Nội dung câu hỏi (Tiếng Việt)
+                  </label>
+                  <input
+                    type="text"
+                    value={activeQ.title}
+                    onChange={(e) =>
+                      updateQuestionMeta({ title: e.target.value, enTitle: e.target.value })
+                    }
+                    onBlur={() => void handleSaveAll()}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#d12f2f] text-sm font-semibold text-slate-900 focus:outline-none transition"
+                  />
                 </div>
 
-                {/* 4. Nội dung trả lời: Tự luận hoặc Danh sách đáp án gọn 1 hàng */}
+                {/* 4. Nội dung trả lời: Tự luận / Thang đo Likert 5 mức / Danh sách đáp án */}
                 {activeQ.type === 'text' ? (
                   <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
                     <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
@@ -1045,25 +1098,49 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-2.5">
-                    <div className="flex items-center justify-between pt-1">
-                      <div className="text-xs font-bold text-slate-800">
-                        Các phương án trả lời ({activeQ.options.length})
+                    {activeQ.type === 'likert' ? (
+                      <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-slate-800">
+                            Thang đo Likert 5 mức độ (Mức 1 → Mức 5)
+                          </span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] text-slate-500">Mẫu thang đo:</span>
+                            {LIKERT_5_PRESETS.map((preset) => (
+                              <button
+                                key={preset.id}
+                                type="button"
+                                onClick={() => applyLikertPresetToCurrentQuestion(preset.id)}
+                                className="px-2.5 py-1 rounded-lg bg-white hover:bg-red-50 text-slate-700 hover:text-[#d12f2f] border border-slate-200 hover:border-red-200 text-[11px] font-semibold transition cursor-pointer"
+                              >
+                                {preset.name.split(' (')[0]}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={addQuestionOption}
-                        className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Thêm phương án
-                      </button>
-                    </div>
+                    ) : (
+                      <div className="flex items-center justify-between pt-1">
+                        <div className="text-xs font-bold text-slate-800">
+                          Các phương án trả lời ({activeQ.options.length})
+                        </div>
+                        <button
+                          type="button"
+                          onClick={addQuestionOption}
+                          className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Thêm phương án
+                        </button>
+                      </div>
+                    )}
 
-                    {/* Bảng phương án trả lời gọn 1 dòng / phương án */}
+                    {/* Bảng phương án trả lời gọn 1 dòng / phương án (Chỉ hiển thị Tiếng Việt) */}
                     <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
                       {activeQ.options.map((opt, idx) => {
                         const isBranchOpen =
                           expandedOptCode === opt.code || Boolean(opt.subQuestionKey);
+                        const isLikert = activeQ.type === 'likert';
                         return (
                           <div
                             key={`${opt.code}_${idx}`}
@@ -1074,41 +1151,41 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                             {/* Dòng chính của phương án */}
                             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                               {/* Mã số */}
-                              <input
-                                type="number"
-                                value={opt.code}
-                                onChange={(e) =>
-                                  updateQuestionOption(idx, {
-                                    code: Number(e.target.value) || 0,
-                                  })
-                                }
-                                onBlur={() => void handleSaveAll()}
-                                title="Mã số đáp án"
-                                className="w-11 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-mono text-xs font-bold text-center shrink-0 focus:outline-none focus:border-slate-400"
-                              />
+                              {isLikert ? (
+                                <span
+                                  className="w-16 py-1.5 rounded-lg bg-red-50 border border-red-200 text-[#d12f2f] font-mono text-xs font-bold text-center shrink-0"
+                                  title="Mức độ Likert (1 đến 5)"
+                                >
+                                  Mức {opt.code}
+                                </span>
+                              ) : (
+                                <input
+                                  type="number"
+                                  value={opt.code}
+                                  onChange={(e) =>
+                                    updateQuestionOption(idx, {
+                                      code: Number(e.target.value) || 0,
+                                    })
+                                  }
+                                  onBlur={() => void handleSaveAll()}
+                                  title="Mã số đáp án"
+                                  className="w-11 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-mono text-xs font-bold text-center shrink-0 focus:outline-none focus:border-slate-400"
+                                />
+                              )}
 
-                              {/* Nhãn Tiếng Việt */}
+                              {/* Nhãn Tiếng Việt (Rộng toàn bộ chiều ngang, không cần ô Tiếng Anh) */}
                               <input
                                 type="text"
                                 value={opt.label}
                                 onChange={(e) =>
-                                  updateQuestionOption(idx, { label: e.target.value })
+                                  updateQuestionOption(idx, {
+                                    label: e.target.value,
+                                    en: e.target.value,
+                                  })
                                 }
                                 onBlur={() => void handleSaveAll()}
                                 placeholder="Nội dung đáp án (Tiếng Việt)..."
                                 className="flex-1 min-w-0 px-3 py-1.5 rounded-lg bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#d12f2f] text-xs font-medium text-slate-900 focus:outline-none"
-                              />
-
-                              {/* Nhãn Tiếng Anh */}
-                              <input
-                                type="text"
-                                value={opt.en}
-                                onChange={(e) =>
-                                  updateQuestionOption(idx, { en: e.target.value })
-                                }
-                                onBlur={() => void handleSaveAll()}
-                                placeholder="English label..."
-                                className="sm:w-52 min-w-0 px-2.5 py-1.5 rounded-lg bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-slate-400 text-xs text-slate-500 focus:outline-none"
                               />
 
                               {/* Các nút tác vụ gọn trên cùng 1 hàng */}
@@ -1127,7 +1204,7 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                       ? 'bg-slate-900 text-white border-slate-900'
                                       : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100'
                                   }`}
-                                  title="Chọn câu hỏi con sẽ mở ra khi chọn đáp án này"
+                                  title="Chọn câu hỏi con sẽ mở ra khi chọn đáp án/mức độ này"
                                 >
                                   <CornerDownRight className="w-3 h-3" />
                                   <span>
@@ -1181,50 +1258,54 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                                   </button>
                                 )}
 
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    updateQuestionOption(
-                                      idx,
-                                      {
-                                        hasOtherInput: !opt.hasOtherInput,
-                                      },
-                                      true
-                                    )
-                                  }
-                                  className={`px-2 py-1 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
-                                    opt.hasOtherInput
-                                      ? 'bg-blue-50 text-blue-700 border-blue-300'
-                                      : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'
-                                  }`}
-                                  title="Mở thêm ô nhập chữ 'Ghi rõ...' khi chọn đáp án này"
-                                >
-                                  Ghi rõ
-                                </button>
+                                {!isLikert && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        updateQuestionOption(
+                                          idx,
+                                          {
+                                            hasOtherInput: !opt.hasOtherInput,
+                                          },
+                                          true
+                                        )
+                                      }
+                                      className={`px-2 py-1 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
+                                        opt.hasOtherInput
+                                          ? 'bg-blue-50 text-blue-700 border-blue-300'
+                                          : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'
+                                      }`}
+                                      title="Mở thêm ô nhập chữ 'Ghi rõ...' khi chọn đáp án này"
+                                    >
+                                      Ghi rõ
+                                    </button>
 
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    updateQuestionOption(idx, { hidden: !opt.hidden }, true)
-                                  }
-                                  className="p-1 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer"
-                                  title={opt.hidden ? 'Hiện đáp án' : 'Ẩn đáp án'}
-                                >
-                                  {opt.hidden ? (
-                                    <EyeOff className="w-3.5 h-3.5" />
-                                  ) : (
-                                    <Eye className="w-3.5 h-3.5" />
-                                  )}
-                                </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        updateQuestionOption(idx, { hidden: !opt.hidden }, true)
+                                      }
+                                      className="p-1 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer"
+                                      title={opt.hidden ? 'Hiện đáp án' : 'Ẩn đáp án'}
+                                    >
+                                      {opt.hidden ? (
+                                        <EyeOff className="w-3.5 h-3.5" />
+                                      ) : (
+                                        <Eye className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
 
-                                <button
-                                  type="button"
-                                  onClick={() => removeQuestionOption(opt.code)}
-                                  className="p-1 rounded-md hover:bg-rose-50 text-slate-400 hover:text-rose-600 cursor-pointer"
-                                  title="Xóa phương án này"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeQuestionOption(opt.code)}
+                                      className="p-1 rounded-md hover:bg-rose-50 text-slate-400 hover:text-rose-600 cursor-pointer"
+                                      title="Xóa phương án này"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             </div>
 
@@ -1385,37 +1466,42 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                 >
                   <option value="single">Chọn 1 đáp án</option>
                   <option value="multi">Chọn nhiều đáp án</option>
+                  <option value="likert">Thang đo Likert (5 mức)</option>
                   <option value="text">Tự luận (Điền chữ/số)</option>
                 </select>
               </div>
             </div>
 
-            <div className="space-y-2.5">
+            {newQType === 'likert' && (
               <div>
                 <label className="text-[11px] font-semibold text-slate-500 block mb-1">
-                  Tiêu đề câu hỏi (Tiếng Việt)
+                  Chọn mẫu thang đo Likert 5 mức
                 </label>
-                <input
-                  type="text"
-                  value={newQTitle}
-                  onChange={(e) => setNewQTitle(e.target.value)}
-                  placeholder="Nhập câu hỏi tiếng Việt..."
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#d12f2f]"
-                />
+                <select
+                  value={newQLikertPreset}
+                  onChange={(e) => setNewQLikertPreset(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg bg-red-50/60 border border-red-200 text-xs font-semibold text-slate-800 focus:outline-none"
+                >
+                  {LIKERT_5_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
               </div>
+            )}
 
-              <div>
-                <label className="text-[11px] font-semibold text-slate-500 block mb-1">
-                  Tiêu đề tiếng Anh (EN)
-                </label>
-                <input
-                  type="text"
-                  value={newQEnTitle}
-                  onChange={(e) => setNewQEnTitle(e.target.value)}
-                  placeholder="English question title..."
-                  className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700 focus:outline-none"
-                />
-              </div>
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 block mb-1">
+                Tiêu đề câu hỏi (Tiếng Việt)
+              </label>
+              <input
+                type="text"
+                value={newQTitle}
+                onChange={(e) => setNewQTitle(e.target.value)}
+                placeholder="Nhập câu hỏi tiếng Việt..."
+                className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#d12f2f]"
+              />
             </div>
 
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
@@ -1532,31 +1618,21 @@ export const SystemSettings: React.FC<SystemSettingsProps> = ({
                     loc.active === false ? 'bg-slate-50 opacity-60' : 'bg-white'
                   }`}
                 >
-                  <div className="sm:col-span-4">
+                  <div className="sm:col-span-7">
                     <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
-                      Tên vị trí (Tiếng Việt)
+                      Tên vị trí khảo sát (Tiếng Việt)
                     </label>
                     <input
                       type="text"
                       value={loc.name}
-                      onChange={(e) => updateLocation(idx, { name: e.target.value })}
+                      onChange={(e) =>
+                        updateLocation(idx, { name: e.target.value, en: e.target.value })
+                      }
                       className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-900 focus:outline-none focus:border-[#d12f2f]"
                     />
                   </div>
 
-                  <div className="sm:col-span-4">
-                    <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
-                      Tên tiếng Anh
-                    </label>
-                    <input
-                      type="text"
-                      value={loc.en}
-                      onChange={(e) => updateLocation(idx, { en: e.target.value })}
-                      className="w-full px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700 focus:outline-none"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-1">
+                  <div className="sm:col-span-2">
                     <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
                       Mã tắt
                     </label>

@@ -744,7 +744,7 @@ export function createEmptySurveyResponse(
 export interface CustomQuestionCsvMeta {
   key: string;
   title: string;
-  type: 'single' | 'multi' | 'text';
+  type: 'single' | 'multi' | 'likert' | 'text';
   options: OptionItem[];
 }
 
@@ -880,7 +880,7 @@ export function exportResponsesToCsv(
         : `${r.locationId} - ${locObj?.name || ''}`;
 
     const customCols = (opts?.customQuestions || []).map((cq) => {
-      if (cq.type === 'single') {
+      if (cq.type === 'single' || cq.type === 'likert') {
         const val = getSingleAnswer(r, cq.key);
         return formatSingle(cq.key, val, cq.options);
       }

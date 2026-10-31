@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CheckCircle2,
   AlertOctagon,
@@ -31,7 +31,15 @@ import {
   SurveySystemConfig,
   QuestionConfigItem,
   ConfigurableOptionItem,
+  getDefaultLikert5Options,
 } from '../services/surveyConfig';
+import {
+  SurveyLanguage,
+  SURVEY_LANGUAGES,
+  translateVi,
+  prewarmSurveyTranslations,
+  subscribeToAutoTranslations,
+} from '../services/autoTranslate';
 
 interface SurveyWizardProps {
   config: SurveySystemConfig;
@@ -55,19 +63,33 @@ const STEPS = [
   { id: 4, code: 'PHẦN C', title: 'Nhu cầu mới' },
 ];
 
+const SAVED_LANG_KEY = 'banafi_fnb_selected_survey_lang_v1';
+
+function getInitialLanguage(): SurveyLanguage {
+  try {
+    const saved = localStorage.getItem(SAVED_LANG_KEY) as SurveyLanguage | null;
+    if (saved && SURVEY_LANGUAGES.some((l) => l.code === saved)) {
+      return saved;
+    }
+  } catch {
+    // ignore
+  }
+  return 'en';
+}
+
 export const SurveyWizard: React.FC<SurveyWizardProps> = ({
   config,
   formData,
   setFormData,
   stepIndex,
   setStepIndex,
-  bilingual,
-  setBilingual,
   elapsedSeconds,
   onStartTimer,
   onSubmitSurvey,
   onStartNewSurvey,
 }) => {
+  const [selectedLang, setSelectedLang] = useState<SurveyLanguage>(() => getInitialLanguage());
+  const [, setTranslationTick] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submittedState, setSubmittedState] = useState<{
     done: boolean;
@@ -76,6 +98,34 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
   } | null>(null);
   const [stepError, setStepError] = useState<string | null>(null);
 
+  const isForeignLang = selectedLang !== 'vi';
+
+  // Lắng nghe cập nhật dịch tự động cho các câu hỏi/đáp án mới do Admin thêm bằng Tiếng Việt
+  useEffect(() => {
+    return subscribeToAutoTranslations(() => {
+      setTranslationTick((t) => t + 1);
+    });
+  }, []);
+
+  // Tự động dịch trước toàn bộ câu hỏi và đáp án sang ngôn ngữ đang chọn
+  useEffect(() => {
+    try {
+      localStorage.setItem(SAVED_LANG_KEY, selectedLang);
+    } catch {
+      // ignore
+    }
+    if (selectedLang === 'vi') return;
+    const texts: string[] = [];
+    Object.values(config.questions).forEach((q) => {
+      if (q.title) texts.push(q.title);
+      if (q.placeholder) texts.push(q.placeholder);
+      (q.options || []).forEach((o) => {
+        if (o.label) texts.push(o.label);
+      });
+    });
+    prewarmSurveyTranslations(texts, selectedLang);
+  }, [config.questions, selectedLang]);
+
   const safeStep = Math.min(Math.max(stepIndex, 0), STEPS.length - 1);
   const activeLocations = config.locations.filter((l) => l.active !== false);
 
@@ -83,8 +133,12 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     .map((k) => config.questions[k])
     .filter((q): q is QuestionConfigItem => Boolean(q && !q.hidden));
 
-  const getVisibleOpts = (q: QuestionConfigItem): ConfigurableOptionItem[] =>
-    (q.options || []).filter((o) => !o.hidden);
+  const getVisibleOpts = (q: QuestionConfigItem): ConfigurableOptionItem[] => {
+    if (q.type === 'likert' && (!q.options || q.options.length === 0)) {
+      return getDefaultLikert5Options();
+    }
+    return (q.options || []).filter((o) => !o.hidden);
+  };
 
   const formatTimer = (sec: number) => {
     const m = String(Math.floor(sec / 60)).padStart(2, '0');
@@ -92,9 +146,9 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     return `${m}:${s}`;
   };
 
-  // Lấy danh sách mã đáp án đang được chọn của một câu hỏi bất kỳ
+  // Lấy danh sách mã đáp án đang được chọn của một câu hỏi bất kỳ (single, likert, multi)
   const getSelectedCodesForQuestion = (q: QuestionConfigItem): number[] => {
-    if (q.type === 'single') {
+    if (q.type === 'single' || q.type === 'likert') {
       const val = getSingleAnswer(formData, q.key);
       return val !== null ? [val] : [];
     }
@@ -113,7 +167,6 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     const results: { childQ: QuestionConfigItem; triggerLabels: string[] }[] = [];
     const seenChildKeys = new Set<string>();
 
-    // 1. Kiểm tra theo liên kết trực tiếp từ đáp án được chọn (`opt.subQuestionKey`) và `child.parentInfo`
     orderedQuestions.forEach((candidate) => {
       if (candidate.key === parentQ.key || visited.has(candidate.key)) return;
 
@@ -130,7 +183,6 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         }
       });
 
-      // Logic đặc thù gốc của bộ câu hỏi Ba Na Hills: A4_1 cũng mở ra dưới A4 nếu S9 thuộc nhóm combo/tour (2, 3, 4) và A4 đã trả lời
       if (
         parentQ.key === 'A4' &&
         candidate.key === 'A4_1' &&
@@ -187,7 +239,6 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
   // Phân loại câu hỏi chính (không phải câu hỏi con) cho từng bước (Step 0 -> Step 4)
   const getTopLevelQuestionsForStep = (step: number): QuestionConfigItem[] => {
     return orderedQuestions.filter((q) => {
-      // Nếu là câu hỏi con của một câu hỏi khác vẫn đang tồn tại -> chỉ hiện bên dưới câu hỏi cha khi chọn đáp án
       if (
         q.parentInfo?.parentQuestionKey &&
         config.questions[q.parentInfo.parentQuestionKey] &&
@@ -205,9 +256,18 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         if (q.section !== 'PHẦN A') return false;
         if (q.branch === 'A1_A2' || q.key === 'A1' || q.key === 'A2') return false;
         if (isNotUsedFnB) {
-          return q.branch === 'A_NOT_USED' || q.branch === 'ALL' || q.key === 'A3' || q.key === 'A3_4';
+          return (
+            q.branch === 'A_NOT_USED' ||
+            q.branch === 'ALL' ||
+            q.key === 'A3' ||
+            q.key === 'A3_4'
+          );
         }
-        return q.branch === 'A_USED' || q.branch === 'ALL' || (!q.branch && q.key !== 'A3' && q.key !== 'A3_4');
+        return (
+          q.branch === 'A_USED' ||
+          q.branch === 'ALL' ||
+          (!q.branch && q.key !== 'A3' && q.key !== 'A3_4')
+        );
       }
       if (step === 3) return q.section === 'PHẦN B';
       if (step === 4) return q.section === 'PHẦN C';
@@ -275,10 +335,9 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     setFormData((prev) => setOtherInputAnswer(prev, qKey, val));
   };
 
-  // Kiểm tra câu hỏi đã được trả lời chưa (bao gồm cả câu hỏi con đang mở)
   const isQuestionAnswered = (q: QuestionConfigItem): boolean => {
     if (q.required === false) return true;
-    if (q.type === 'single') {
+    if (q.type === 'single' || q.type === 'likert') {
       return getSingleAnswer(formData, q.key) !== null;
     }
     if (q.type === 'multi') {
@@ -412,7 +471,58 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     );
   }
 
-  // Render một câu hỏi bất kỳ (single / multi / text) kèm theo các Câu hỏi con kích hoạt từ đáp án đã chọn
+  /**
+   * Hiển thị văn bản Song ngữ:
+   * - Khi chọn ngôn ngữ (Anh / Ấn / Hàn / Trung / Nga): Ngôn ngữ được chọn hiển thị chính ở trên, Tiếng Việt tham chiếu luôn hiển thị ngay bên dưới.
+   * - Khi chọn Tiếng Việt: Hiển thị Tiếng Việt.
+   */
+  const renderBilingualQuestionTitle = (viTitle: string, fallbackEn?: string) => {
+    if (!isForeignLang) {
+      return <div className="text-sm font-bold text-slate-900 leading-snug">{viTitle}</div>;
+    }
+    const primaryTranslated = translateVi(viTitle, selectedLang, fallbackEn);
+    return (
+      <div className="space-y-0.5">
+        <div className="text-sm font-bold text-slate-900 leading-snug">
+          {primaryTranslated}
+        </div>
+        <div className="text-xs font-medium text-slate-500 leading-snug">
+          {viTitle}
+        </div>
+      </div>
+    );
+  };
+
+  const renderBilingualOptionText = (viLabel: string, fallbackEn?: string, active = false) => {
+    if (!isForeignLang) {
+      return (
+        <span className="block text-[13px] font-semibold leading-snug text-slate-900">
+          {viLabel}
+        </span>
+      );
+    }
+    const primaryTranslated = translateVi(viLabel, selectedLang, fallbackEn);
+    return (
+      <span className="min-w-0 flex-1 block space-y-0.5">
+        <span
+          className={`block text-[13px] font-semibold leading-snug ${
+            active ? 'text-slate-950' : 'text-slate-900'
+          }`}
+        >
+          {primaryTranslated}
+        </span>
+        <span
+          className={`block text-[11px] leading-tight ${
+            active ? 'text-slate-600 font-medium' : 'text-slate-500'
+          }`}
+        >
+          {viLabel}
+        </span>
+      </span>
+    );
+  };
+
+  // Render một câu hỏi bất kỳ (single / multi / likert / text) kèm theo các Câu hỏi con kích hoạt từ đáp án đã chọn
   const renderQuestionBlock = (
     q: QuestionConfigItem,
     visited = new Set<string>(),
@@ -433,7 +543,7 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
     return (
       <div key={q.key} className="space-y-2.5">
         <div
-          className={`bg-white rounded-2xl p-4 border space-y-2.5 ${
+          className={`bg-white rounded-2xl p-4 border space-y-3 ${
             triggerInfo
               ? 'border-red-200/90 bg-red-50/15 shadow-2xs'
               : 'border-slate-200/90'
@@ -449,25 +559,80 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
           )}
 
           <div className="flex items-start justify-between gap-2">
-            <div>
-              <div className="text-sm font-semibold text-slate-900">{q.title}</div>
-              {bilingual && <div className="text-xs text-slate-400 mt-0.5">{q.enTitle}</div>}
+            <div className="min-w-0 flex-1">
+              {renderBilingualQuestionTitle(q.title, q.enTitle)}
             </div>
             {q.type === 'multi' && (
               <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-semibold shrink-0">
                 {q.maxSelect && q.maxSelect > 0 ? `Tối đa ${q.maxSelect}` : 'Chọn nhiều'}
               </span>
             )}
+            {q.type === 'likert' && (
+              <span className="px-2 py-0.5 rounded-md bg-red-50 text-[#d12f2f] border border-red-200 text-[11px] font-semibold shrink-0">
+                Thang 1–5
+              </span>
+            )}
           </div>
 
           {q.type === 'text' ? (
-            <input
-              type="text"
-              value={getTextAnswer(formData, q.key)}
-              onChange={(e) => handleTextChange(q, e.target.value)}
-              placeholder={q.placeholder || 'Nhập câu trả lời...'}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-[#d12f2f]"
-            />
+            <div className="space-y-1">
+              <input
+                type="text"
+                value={getTextAnswer(formData, q.key)}
+                onChange={(e) => handleTextChange(q, e.target.value)}
+                placeholder={
+                  isForeignLang
+                    ? `${translateVi(
+                        q.placeholder || 'Nhập câu trả lời của du khách...',
+                        selectedLang
+                      )} / ${q.placeholder || 'Nhập câu trả lời...'}`
+                    : q.placeholder || 'Nhập câu trả lời...'
+                }
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-[#d12f2f]"
+              />
+            </div>
+          ) : q.type === 'likert' ? (
+            /* Giao diện Thang đo Likert 5 mức (1 → 5) Song ngữ */
+            <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+              {opts.map((opt) => {
+                const active = selectedCodes.includes(opt.code);
+                const primaryLabel = isForeignLang
+                  ? translateVi(opt.label, selectedLang, opt.en)
+                  : opt.label;
+                return (
+                  <button
+                    key={opt.code}
+                    type="button"
+                    onClick={() => handleSelectSingle(q, opt.code)}
+                    className={`p-2.5 rounded-xl border text-left sm:text-center transition flex sm:flex-col items-center gap-2.5 sm:gap-1.5 cursor-pointer ${
+                      active
+                        ? 'bg-red-50 border-[#d12f2f] text-slate-950 shadow-2xs ring-1 ring-[#d12f2f]'
+                        : 'bg-slate-50/80 border-slate-200/90 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span
+                      className={`w-7 h-7 rounded-full text-xs font-extrabold flex items-center justify-center shrink-0 transition ${
+                        active
+                          ? 'bg-[#d12f2f] text-white'
+                          : 'bg-white border border-slate-300 text-slate-700'
+                      }`}
+                    >
+                      {opt.code}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-slate-900 leading-snug">
+                        {primaryLabel}
+                      </div>
+                      {isForeignLang && (
+                        <div className="text-[11px] text-slate-500 leading-tight mt-0.5">
+                          {opt.label}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {opts.map((opt) => {
@@ -499,16 +664,7 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
                     >
                       {opt.code}
                     </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-medium leading-snug">
-                        {opt.label}
-                      </span>
-                      {bilingual && (
-                        <span className="block text-[11px] text-slate-400 leading-tight mt-0.5">
-                          {opt.en}
-                        </span>
-                      )}
-                    </span>
+                    {renderBilingualOptionText(opt.label, opt.en, active)}
                   </button>
                 );
               })}
@@ -539,17 +695,29 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
         {/* Ma trận A5 hiển thị ngay sau câu A4 / A4_1 nếu ở Bước 2 nhánh Đã dùng F&B */}
         {q.key === 'A4' && !isNotUsedFnB && activeA5Rows.length > 0 && (
           <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-3">
-            <div className="text-sm font-semibold text-slate-900">
-              A5. Mức chi theo từng loại hình đã dùng (1 người)
-            </div>
+            {renderBilingualQuestionTitle(
+              'A5. Mức chi theo từng loại hình đã dùng (1 người)',
+              'A5. Spending breakdown by F&B category used (per person)'
+            )}
             <div className="space-y-2.5">
               {activeA5Rows.map((row) => (
                 <div
                   key={row.key}
                   className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5"
                 >
-                  <div className="text-xs font-semibold text-slate-800">{row.label}</div>
-                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                  <div>
+                    {isForeignLang ? (
+                      <>
+                        <div className="text-xs font-bold text-slate-900">
+                          {translateVi(row.label, selectedLang, row.en)}
+                        </div>
+                        <div className="text-[11px] text-slate-500">{row.label}</div>
+                      </>
+                    ) : (
+                      <div className="text-xs font-semibold text-slate-800">{row.label}</div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
                     {A5_COLUMNS.map((col) => {
                       const active = formData.A5[row.key] === col.code;
                       return (
@@ -583,43 +751,60 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
 
   return (
     <div className="space-y-3.5 pb-16">
-      {/* Compact Metadata Strip */}
-      <div className="bg-white rounded-2xl p-3 border border-slate-200/90 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <MapPin className="w-4 h-4 text-[#d12f2f] shrink-0" />
-          <select
-            value={formData.locationId}
-            onChange={(e) => updateField('locationId', Number(e.target.value))}
-            className="px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800"
-          >
-            {activeLocations.map((loc) => (
-              <option key={loc.id} value={loc.id}>
-                {loc.name}
-              </option>
-            ))}
-          </select>
-          <span className="text-xs font-mono font-semibold text-slate-500 hidden sm:inline">
-            #{formData.surveyCode}
-          </span>
-        </div>
+      {/* Thanh điều khiển Điểm trực + Bộ chọn Ngôn ngữ Song ngữ (Anh / Ấn / Hàn / Trung / Nga + Tiếng Việt tham chiếu) */}
+      <div className="bg-white rounded-2xl p-3 border border-slate-200/90 space-y-2.5 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-[#d12f2f] shrink-0" />
+            <select
+              value={formData.locationId}
+              onChange={(e) => updateField('locationId', Number(e.target.value))}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800"
+            >
+              {activeLocations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs font-mono font-semibold text-slate-500 hidden sm:inline">
+              #{formData.surveyCode}
+            </span>
+          </div>
 
-        <div className="flex items-center gap-2">
           <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-mono text-xs font-semibold inline-flex items-center gap-1">
             <Clock className="w-3.5 h-3.5 text-slate-500" />
             {formatTimer(elapsedSeconds)}
           </span>
-          <button
-            type="button"
-            onClick={() => setBilingual(!bilingual)}
-            className={`px-2.5 py-1 rounded-lg text-xs font-semibold inline-flex items-center gap-1 border transition cursor-pointer ${
-              bilingual
-                ? 'bg-red-50 text-[#d12f2f] border-red-200'
-                : 'bg-slate-50 text-slate-600 border-slate-200'
-            }`}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            {bilingual ? 'Song ngữ VI/EN' : 'Chỉ Tiếng Việt'}
-          </button>
+        </div>
+
+        {/* Bộ chọn Ngôn ngữ hiển thị chính (kèm Tiếng Việt luôn hiển thị bên dưới) */}
+        <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-semibold text-slate-500 inline-flex items-center gap-1">
+            <Globe className="w-3.5 h-3.5 text-[#d12f2f]" />
+            Ngôn ngữ khách (Kèm Tiếng Việt bên dưới):
+          </span>
+
+          <div className="flex flex-wrap items-center gap-1">
+            {SURVEY_LANGUAGES.map((lang) => {
+              const active = selectedLang === lang.code;
+              return (
+                <button
+                  key={lang.code}
+                  type="button"
+                  onClick={() => setSelectedLang(lang.code)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold inline-flex items-center gap-1 border transition cursor-pointer ${
+                    active
+                      ? 'bg-[#d12f2f] text-white border-[#d12f2f] shadow-2xs'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  <span>{lang.flag}</span>
+                  <span>{lang.nameVi.replace('Tiếng ', '')}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -702,16 +887,28 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
       {safeStep === 3 && (
         <div className="space-y-3">
           <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
-            <div className="text-sm font-semibold text-slate-900">
-              B4. Cảm nhận mức giá hiện tại (1: Đắt • 2: Hợp lý • 3: Rẻ)
-            </div>
+            {renderBilingualQuestionTitle(
+              'B4. Cảm nhận mức giá hiện tại (1: Đắt • 2: Hợp lý • 3: Rẻ)',
+              'B4. Perception of current price levels (1: Expensive • 2: Reasonable • 3: Cheap)'
+            )}
             <div className="space-y-2">
               {B4_ROWS.map((row) => (
                 <div
                   key={row.key}
                   className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/70"
                 >
-                  <span className="text-xs font-medium text-slate-800">{row.label}</span>
+                  <div>
+                    {isForeignLang ? (
+                      <>
+                        <div className="text-xs font-bold text-slate-900">
+                          {translateVi(row.label, selectedLang, row.en)}
+                        </div>
+                        <div className="text-[11px] text-slate-500">{row.label}</div>
+                      </>
+                    ) : (
+                      <span className="text-xs font-medium text-slate-800">{row.label}</span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-3 gap-1.5 shrink-0">
                     {[
                       { code: 1, label: '1. Đắt' },
@@ -719,6 +916,9 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
                       { code: 3, label: '3. Rẻ' },
                     ].map((opt) => {
                       const active = formData.B4[row.key] === opt.code;
+                      const primaryOpt = isForeignLang
+                        ? translateVi(opt.label, selectedLang)
+                        : opt.label;
                       return (
                         <button
                           key={opt.code}
@@ -726,13 +926,22 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
                           onClick={() =>
                             updateField('B4', { ...formData.B4, [row.key]: opt.code })
                           }
-                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
                             active
                               ? 'bg-[#d12f2f] text-white border-[#d12f2f]'
-                              : 'bg-white text-slate-600 border-slate-200'
+                              : 'bg-white text-slate-700 border-slate-200'
                           }`}
                         >
-                          {opt.label}
+                          <div>{primaryOpt}</div>
+                          {isForeignLang && (
+                            <div
+                              className={`text-[10px] ${
+                                active ? 'text-red-100' : 'text-slate-400'
+                              }`}
+                            >
+                              {opt.label}
+                            </div>
+                          )}
                         </button>
                       );
                     })}
@@ -744,16 +953,28 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
 
           {!isNotUsedFnB && (
             <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
-              <div className="text-sm font-semibold text-slate-900">
-                B5. Mức độ hài lòng (1: Rất tệ → 5: Rất hài lòng)
-              </div>
+              {renderBilingualQuestionTitle(
+                'B5. Mức độ hài lòng (1: Rất tệ → 5: Rất hài lòng)',
+                'B5. Satisfaction level (1: Very Dissatisfied → 5: Very Satisfied)'
+              )}
               <div className="space-y-2">
                 {B5_ITEMS.map((item) => (
                   <div
                     key={item.key}
                     className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/70"
                   >
-                    <span className="text-xs font-medium text-slate-800">{item.label}</span>
+                    <div className="min-w-0 flex-1">
+                      {isForeignLang ? (
+                        <>
+                          <div className="text-xs font-bold text-slate-900">
+                            {translateVi(item.label, selectedLang, item.en)}
+                          </div>
+                          <div className="text-[11px] text-slate-500">{item.label}</div>
+                        </>
+                      ) : (
+                        <span className="text-xs font-medium text-slate-800">{item.label}</span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {[1, 2, 3, 4, 5].map((score) => {
                         const active = formData.B5[item.key] === score;
@@ -786,9 +1007,7 @@ export const SurveyWizard: React.FC<SurveyWizardProps> = ({
       {/* Ghi chú mở & Chọn quà tặng ở Bước 4 (PHẦN C) */}
       {safeStep === 4 && (
         <div className="bg-white rounded-2xl p-4 border border-slate-200/90 space-y-2.5">
-          <label className="block text-sm font-semibold text-slate-900">
-            Ghi chú ý kiến mở &amp; Chọn quà tặng
-          </label>
+          {renderBilingualQuestionTitle('Ghi chú ý kiến mở & Chọn quà tặng')}
           <input
             type="text"
             value={formData.C4_note}

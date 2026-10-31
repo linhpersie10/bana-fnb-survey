@@ -37,7 +37,64 @@ const LOCAL_CONFIG_KEY = 'banafi_fnb_survey_system_config_v2';
 export type QuestionKey = string;
 
 export type SurveySection = 'PHẦN S' | 'PHẦN A' | 'PHẦN B' | 'PHẦN C';
-export type QuestionInputType = 'single' | 'multi' | 'text';
+export type QuestionInputType = 'single' | 'multi' | 'likert' | 'text';
+
+export interface LikertPreset {
+  id: string;
+  name: string;
+  options: ConfigurableOptionItem[];
+}
+
+export const LIKERT_5_PRESETS: LikertPreset[] = [
+  {
+    id: 'satisfaction',
+    name: 'Mức độ hài lòng (1: Rất không hài lòng → 5: Rất hài lòng)',
+    options: [
+      { code: 1, label: 'Rất không hài lòng', en: 'Very dissatisfied' },
+      { code: 2, label: 'Không hài lòng', en: 'Dissatisfied' },
+      { code: 3, label: 'Bình thường', en: 'Neutral' },
+      { code: 4, label: 'Hài lòng', en: 'Satisfied' },
+      { code: 5, label: 'Rất hài lòng', en: 'Very satisfied' },
+    ],
+  },
+  {
+    id: 'agreement',
+    name: 'Mức độ đồng ý (1: Hoàn toàn không đồng ý → 5: Hoàn toàn đồng ý)',
+    options: [
+      { code: 1, label: 'Hoàn toàn không đồng ý', en: 'Strongly disagree' },
+      { code: 2, label: 'Không đồng ý', en: 'Disagree' },
+      { code: 3, label: 'Trung lập / Phân vân', en: 'Neutral' },
+      { code: 4, label: 'Đồng ý', en: 'Agree' },
+      { code: 5, label: 'Hoàn toàn đồng ý', en: 'Strongly agree' },
+    ],
+  },
+  {
+    id: 'importance',
+    name: 'Mức độ quan trọng (1: Không quan trọng → 5: Rất quan trọng)',
+    options: [
+      { code: 1, label: 'Hoàn toàn không quan trọng', en: 'Not important at all' },
+      { code: 2, label: 'Ít quan trọng', en: 'Slightly important' },
+      { code: 3, label: 'Bình thường', en: 'Neutral' },
+      { code: 4, label: 'Quan trọng', en: 'Important' },
+      { code: 5, label: 'Rất quan trọng', en: 'Very important' },
+    ],
+  },
+  {
+    id: 'quality',
+    name: 'Đánh giá chất lượng (1: Rất kém → 5: Rất tốt)',
+    options: [
+      { code: 1, label: 'Rất kém', en: 'Very poor' },
+      { code: 2, label: 'Kém', en: 'Poor' },
+      { code: 3, label: 'Trung bình', en: 'Average' },
+      { code: 4, label: 'Tốt', en: 'Good' },
+      { code: 5, label: 'Rất tốt', en: 'Very good' },
+    ],
+  },
+];
+
+export function getDefaultLikert5Options(): ConfigurableOptionItem[] {
+  return LIKERT_5_PRESETS[0].options.map((o) => ({ ...o }));
+}
 
 export interface ConfigurableOptionItem extends OptionItem {
   hidden?: boolean;
