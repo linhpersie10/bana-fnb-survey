@@ -58,12 +58,13 @@ import {
 import { AuthVault } from './components/AuthVault';
 import { SurveyWizard } from './components/SurveyWizard';
 import { QuotaDashboard } from './components/QuotaDashboard';
+import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { ResponsesTable } from './components/ResponsesTable';
 import { UserManagement } from './components/UserManagement';
 import { SystemSettings } from './components/SystemSettings';
 import { BrandMark } from './components/BrandMark';
 
-type ActiveTab = 'survey' | 'quota' | 'data' | 'users' | 'settings';
+type ActiveTab = 'survey' | 'analytics' | 'quota' | 'data' | 'users' | 'settings';
 
 interface AuthUserState {
   uid: string;
@@ -561,6 +562,21 @@ export const App: React.FC = () => {
           {isAdminOrSuper && (
             <button
               type="button"
+              onClick={() => setActiveTab('analytics')}
+              className={`px-3 py-2 text-xs font-semibold flex items-center gap-1.5 border-b-2 whitespace-nowrap transition cursor-pointer ${
+                activeTab === 'analytics'
+                  ? 'border-[#d12f2f] text-[#d12f2f]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              Báo cáo &amp; Biểu đồ ({validCount})
+            </button>
+          )}
+
+          {isAdminOrSuper && (
+            <button
+              type="button"
               onClick={() => setActiveTab('quota')}
               className={`px-3 py-2 text-xs font-semibold flex items-center gap-1.5 border-b-2 whitespace-nowrap transition cursor-pointer ${
                 activeTab === 'quota'
@@ -568,7 +584,7 @@ export const App: React.FC = () => {
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
-              <BarChart3 className="w-3.5 h-3.5" />
+              <MapPin className="w-3.5 h-3.5" />
               Quota ({validCount}/{surveyConfig.dataFormat.totalQuotaTarget || 600})
             </button>
           )}
@@ -638,6 +654,17 @@ export const App: React.FC = () => {
               onStartNewSurvey={handleStartNewSurvey}
             />
           </div>
+        )}
+
+        {activeTab === 'analytics' && isAdminOrSuper && (
+          <AnalyticsDashboard
+            responses={responses}
+            config={surveyConfig}
+            canExport={isAdminOrSuper}
+            isSuperadmin={isSuperadmin}
+            onSeedPilotSamples={handleSeedPilot}
+            onClearPilotSamples={handleClearPilot}
+          />
         )}
 
         {activeTab === 'quota' && isAdminOrSuper && (

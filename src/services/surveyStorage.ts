@@ -668,24 +668,27 @@ export function seedSamplePilotResponses(
       B3_2: (i % 2) + 1,
       B3_3: 1,
       B4: {
-        buffet: 2,
-        alacarte: 2,
-        fastfood: 2,
-        beverage: 2,
-        pastry: 2,
+        buffet: i % 3 === 0 ? 1 : 2,
+        alacarte: i % 4 === 0 ? 1 : 2,
+        fastfood: i % 2 === 0 ? 2 : 1,
+        beverage: i % 5 === 0 ? 3 : 2,
+        pastry: i % 3 === 1 ? 2 : 3,
       },
       B5: {
-        B5_1: 5,
-        B5_2: 5,
-        B5_3: 5,
-        B5_4: 4,
-        B5_5: 4,
-        B5_6: 5,
+        B5_1: ((i + 1) % 3) + 3,
+        B5_2: ((i + 2) % 2) + 4,
+        B5_3: i % 5 === 0 ? 3 : 5,
+        B5_4: (i % 3) + 3,
+        B5_5: (i % 4) + 2,
+        B5_6: ((i + 1) % 2) + 4,
       },
-      C1: [2, 3],
-      C2: i % 4 === 0 ? [1, 2] : [7],
-      C3: [1, 3, 6],
-      C4_note: 'Mẫu khảo sát thử nghiệm (Pilot)',
+      C1: i % 2 === 0 ? [2, 3] : [1, 2, 4],
+      C2: i % 4 === 0 ? [1, 2] : i % 5 === 0 ? [5] : [7],
+      C3: i % 2 === 0 ? [1, 3, 6] : [2, 4, 10],
+      C4_note:
+        i % 3 === 0
+          ? 'Nên bổ sung thêm quầy nước giải khát nhanh và thực đơn combo gia đình.'
+          : 'Không gian thoáng mát, món ăn đa dạng.',
     };
     samples.push(sample);
   }

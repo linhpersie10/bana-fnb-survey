@@ -316,6 +316,12 @@ export const B4_ROWS: B4ProductRow[] = [
   },
 ];
 
+export const B4_PERCEPTION_OPTIONS: OptionItem[] = [
+  { code: 1, label: 'Đắt', en: 'Expensive' },
+  { code: 2, label: 'Hợp lý', en: 'Reasonable' },
+  { code: 3, label: 'Rẻ', en: 'Cheap' },
+];
+
 export interface B5ServqualItem {
   key: 'B5_1' | 'B5_2' | 'B5_3' | 'B5_4' | 'B5_5' | 'B5_6';
   code: string;
@@ -804,10 +810,14 @@ export function createEmptySurveyResponse(
 
 export interface CustomQuestionCsvMeta {
   key: string;
+  section?: string;
   title: string;
   type: 'single' | 'multi' | 'likert' | 'text';
   likertScale?: string[];
-  options: (OptionItem & { rowCode?: string })[];
+  hasOtherInput?: boolean;
+  isSubQuestion?: boolean;
+  parentQuestionKey?: string;
+  options: (OptionItem & { rowCode?: string; hasOtherInput?: boolean })[];
 }
 
 export interface CsvExportOptions {
@@ -816,32 +826,130 @@ export interface CsvExportOptions {
   multiSelectSeparator?: string;
   locations?: SurveyLocation[];
   questionOptionsMap?: Record<string, OptionItem[]>;
+  /** Danh sách đầy đủ các câu hỏi theo thứ tự cấu hình (bao gồm cả câu mặc định và câu Admin thêm mới) */
+  allQuestionsInOrder?: CustomQuestionCsvMeta[];
+  /** Tương thích ngược với tham số cũ */
   customQuestions?: CustomQuestionCsvMeta[];
+  /** Có xuất dòng mô tả câu hỏi đầy đủ ở dòng tiêu đề thứ 2 của CSV hay không (mặc định: true) */
+  includeQuestionTitleRow?: boolean;
 }
 
-export function exportResponsesToCsv(
+export type ReportSectionId =
+  | 'META'
+  | 'PHẦN S'
+  | 'PHẦN A'
+  | 'PHẦN B'
+  | 'PHẦN C'
+  | 'MỞ RỘNG';
+
+export interface StructuredReportColumn {
+  /** Mã biến chuẩn phục vụ phân tích SPSS / Excel / Python */
+  code: string;
+  /** Nhãn tiêu đề đầy đủ của câu hỏi / tiêu chí */
+  label: string;
+  /** Phân nhóm cấu trúc trong báo cáo */
+  section: ReportSectionId;
+  /** Hàm trích xuất giá trị của 1 phiếu khảo sát ở cột này */
+  getValue: (r: SurveyResponseData, rowIndex: number) => string | number;
+}
+
+export interface StructuredDetailField {
+  code: string;
+  label: string;
+  value: string;
+  isEmpty: boolean;
+}
+
+export interface StructuredDetailSection {
+  section: ReportSectionId;
+  sectionTitle: string;
+  fields: StructuredDetailField[];
+}
+
+const DEFAULT_LIKERT_IMPORTANCE_SCALE = [
+  'Rất không quan trọng',
+  'Không quan trọng',
+  'Bình thường',
+  'Quan trọng',
+  'Cực kỳ quan trọng',
+];
+
+const FALLBACK_BUILTIN_QUESTIONS: CustomQuestionCsvMeta[] = [
+  { key: 'S1', section: 'PHẦN S', title: 'S1. Thời gian tham quan tại Bà Nà Hills hôm nay đã đạt từ 4 tiếng trở lên chưa?', type: 'single', options: S1_OPTIONS },
+  { key: 'S2', section: 'PHẦN S', title: 'S2. Anh/Chị có trực tiếp chi trả chi phí ăn uống hôm nay không?', type: 'single', options: S2_OPTIONS },
+  { key: 'S3', section: 'PHẦN S', title: 'S3. Giới tính', type: 'single', options: S3_OPTIONS },
+  { key: 'S4', section: 'PHẦN S', title: 'S4. Độ tuổi', type: 'single', options: S4_OPTIONS },
+  { key: 'S5', section: 'PHẦN S', title: 'S5. Nơi sinh sống / Quốc tịch', type: 'single', options: S5_OPTIONS },
+  { key: 'S6', section: 'PHẦN S', title: 'S6. Đi cùng ai trong chuyến đi hôm nay', type: 'single', options: S6_OPTIONS },
+  { key: 'S7', section: 'PHẦN S', title: 'S7. Hình thức chuyến đi', type: 'single', options: S7_OPTIONS },
+  { key: 'S8', section: 'PHẦN S', title: 'S8. Số lần đến Sun World Ba Na Hills', type: 'single', options: S8_OPTIONS },
+  { key: 'S9', section: 'PHẦN S', title: 'S9. Loại vé / Gói sản phẩm sử dụng hôm nay', type: 'single', options: S9_OPTIONS },
+  { key: 'A1', section: 'PHẦN A', title: 'A1. Ngân sách dự kiến chi cho ăn uống trên 1 người (VNĐ/người)', type: 'single', options: A1_OPTIONS },
+  { key: 'A2', section: 'PHẦN A', title: 'A2. Dịch vụ ăn uống đã sử dụng tại Bà Nà Hills hôm nay', type: 'multi', options: A2_OPTIONS },
+  { key: 'A3', section: 'PHẦN A', title: 'A3. Lý do chưa sử dụng dịch vụ ẩm thực tại Bà Nà Hills hôm nay', type: 'multi', options: A3_OPTIONS },
+  { key: 'A3_1', section: 'PHẦN A', title: 'A3.1. Anh/Chị đã ăn ở đâu trước khi lên Bà Nà?', type: 'text', options: [] },
+  { key: 'A3_2', section: 'PHẦN A', title: 'A3.2. Mức giá hợp lý Anh/Chị sẵn sàng chi cho 1 bữa ăn/đồ uống (VNĐ/người)?', type: 'text', options: [] },
+  { key: 'A3_3', section: 'PHẦN A', title: 'A3.3. Món ăn hoặc dịch vụ ẩm thực cụ thể mà Anh/Chị mong muốn có?', type: 'text', options: [] },
+  { key: 'A3_4', section: 'PHẦN A', title: 'A3.4. Nếu các yếu tố trên được cải thiện, khả năng Anh/Chị sử dụng F&B tại Bà Nà?', type: 'single', options: A3_4_OPTIONS },
+  { key: 'A4', section: 'PHẦN A', title: 'A4. Tổng chi phí ăn uống thực tế bình quân 1 người hôm nay (VNĐ/người)', type: 'single', options: A4_OPTIONS },
+  { key: 'A4_1', section: 'PHẦN A', title: 'A4.1. Số tiền thực tế đã chi thêm ngoài suất ăn trong vé/tour (1 người)', type: 'single', options: A4_1_OPTIONS },
+  { key: 'A6', section: 'PHẦN A', title: 'A6. Thời điểm quyết định mua đồ ăn/thức uống hôm nay', type: 'multi', options: A6_OPTIONS },
+  { key: 'A7', section: 'PHẦN A', title: 'A7. Sẵn sàng chi thêm để mua đặc sản/quà ẩm thực mang về?', type: 'single', options: A7_OPTIONS },
+  { key: 'A8', section: 'PHẦN A', title: 'A8. Mức dự kiến chi cho quà ẩm thực mang về (1 người)', type: 'single', options: A8_OPTIONS },
+  { key: 'B1', section: 'PHẦN B', title: 'B1. Nhóm sản phẩm ẩm thực quan tâm / ưu tiên nhất tại Bà Nà Hills', type: 'multi', options: B1_OPTIONS },
+  { key: 'B2', section: 'PHẦN B', title: 'B2. Hình thức phục vụ ưu tiên nhất', type: 'multi', options: B2_OPTIONS },
+  { key: 'B3_1', section: 'PHẦN B', title: 'B3.1. Khẩu vị ưu tiên — Độ cay', type: 'single', options: B3_1_OPTIONS },
+  { key: 'B3_2', section: 'PHẦN B', title: 'B3.2. Khẩu vị ưu tiên — Độ đậm vị', type: 'single', options: B3_2_OPTIONS },
+  { key: 'B3_3', section: 'PHẦN B', title: 'B3.3. Khẩu vị ưu tiên — Nhiệt độ món', type: 'single', options: B3_3_OPTIONS },
+  {
+    key: 'B5',
+    section: 'PHẦN B',
+    title: 'B5. Mức độ quan trọng của các yếu tố khi quyết định sử dụng F&B (Khung SERVQUAL)',
+    type: 'likert',
+    likertScale: DEFAULT_LIKERT_IMPORTANCE_SCALE,
+    options: B5_ITEMS.map((item, idx) => ({
+      code: idx + 1,
+      rowCode: item.code,
+      label: `${item.dimension}: ${item.label}`,
+      en: item.en,
+    })),
+  },
+  { key: 'C1', section: 'PHẦN C', title: 'C1. Khung giờ phát sinh nhu cầu ăn uống cao nhất tại Bà Nà Hills', type: 'multi', options: C1_OPTIONS },
+  { key: 'C2', section: 'PHẦN C', title: 'C2. Nhu cầu ăn uống đặc biệt của đoàn/nhóm khách', type: 'multi', options: C2_OPTIONS },
+  { key: 'C3', section: 'PHẦN C', title: 'C3. Yếu tố cần ưu tiên cải thiện nhất để nâng cao trải nghiệm ẩm thực', type: 'multi', options: C3_OPTIONS },
+];
+
+/**
+ * Xây dựng danh sách toàn bộ các cột báo cáo có cấu trúc đầy đủ nhất (100% thông tin khảo sát).
+ * Đảm bảo không bỏ sót bất kỳ trường định danh, câu hỏi gốc, ma trận A5/B4, bảng Likert nhiều dòng (B5 và câu mới),
+ * câu hỏi con, ô nhập "Khác (ghi rõ)" hay dữ liệu mở rộng nào.
+ */
+export function buildStructuredReportColumns(
   responses: SurveyResponseData[],
   opts?: CsvExportOptions
-): void {
-  const delimiter = opts?.delimiter || ',';
-  const valueMode = opts?.valueMode || 'code_only';
+): StructuredReportColumn[] {
+  const valueMode = opts?.valueMode || 'code_and_label';
   const multiSep = opts?.multiSelectSeparator || '; ';
   const locs = opts?.locations || SURVEY_LOCATIONS;
   const qMap = opts?.questionOptionsMap || {};
 
-  const formatSingle = (qKey: string, code: number | null, fallbackOpts: OptionItem[]) => {
+  const formatSingleWithList = (code: number | null | undefined, list: OptionItem[]): string => {
     if (code === null || code === undefined) return '';
     if (valueMode === 'code_only') return String(code);
-    const list = qMap[qKey] || fallbackOpts;
     const found = list.find((o) => o.code === code);
     if (!found) return String(code);
     return valueMode === 'label_only' ? found.label : `${code} - ${found.label}`;
   };
 
-  const formatMulti = (qKey: string, codes: number[], fallbackOpts: OptionItem[]) => {
+  const formatSingle = (qKey: string, code: number | null, fallbackOpts: OptionItem[]): string => {
+    const list = qMap[qKey] && qMap[qKey].length > 0 ? qMap[qKey] : fallbackOpts;
+    return formatSingleWithList(code, list);
+  };
+
+  const formatMulti = (qKey: string, codes: number[], fallbackOpts: OptionItem[]): string => {
     if (!Array.isArray(codes) || codes.length === 0) return '';
     if (valueMode === 'code_only') return codes.join(multiSep.trim() || ';');
-    const list = qMap[qKey] || fallbackOpts;
+    const list = qMap[qKey] && qMap[qKey].length > 0 ? qMap[qKey] : fallbackOpts;
     return codes
       .map((c) => {
         const found = list.find((o) => o.code === c);
@@ -851,218 +959,730 @@ export function exportResponsesToCsv(
       .join(multiSep);
   };
 
-  const formatLikertScore = (score: number | null, scaleLabels?: string[]) => {
+  const formatLikertScore = (score: number | null, scaleLabels?: string[]): string => {
     if (score === null || score === undefined) return '';
-    if (valueMode === 'code_only' || !scaleLabels || !scaleLabels[score - 1]) {
-      return String(score);
-    }
-    const label = scaleLabels[score - 1];
+    const labels =
+      Array.isArray(scaleLabels) && scaleLabels.length === 5
+        ? scaleLabels
+        : DEFAULT_LIKERT_IMPORTANCE_SCALE;
+    if (valueMode === 'code_only') return String(score);
+    const label = labels[score - 1];
+    if (!label) return String(score);
     return valueMode === 'label_only' ? label : `${score} - ${label}`;
   };
 
-  const customHeaderCols: string[] = [];
-  (opts?.customQuestions || []).forEach((cq) => {
-    if (cq.type === 'likert') {
-      cq.options.forEach((rowOpt) => {
-        const rCode = (rowOpt.rowCode || `${cq.key}.${rowOpt.code}`).replace(/\./g, '_');
-        customHeaderCols.push(
-          `${rCode}_${rowOpt.label.slice(0, 20).replace(/\s+/g, '_')}`
-        );
-      });
-    } else {
-      customHeaderCols.push(`${cq.key}_${cq.title.slice(0, 24).replace(/\s+/g, '_')}`);
+  // Chuẩn bị danh sách câu hỏi theo thứ tự cấu trúc
+  const configuredQuestions: CustomQuestionCsvMeta[] = [];
+  const seenQKeys = new Set<string>();
+
+  const sourceList =
+    opts?.allQuestionsInOrder && opts.allQuestionsInOrder.length > 0
+      ? opts.allQuestionsInOrder
+      : FALLBACK_BUILTIN_QUESTIONS;
+
+  sourceList.forEach((q) => {
+    if (!seenQKeys.has(q.key)) {
+      seenQKeys.add(q.key);
+      configuredQuestions.push(q);
     }
   });
 
-  const headers = [
-    'ID',
-    'Ma_Phieu',
-    'Ngay_KS',
-    'Gio_BD',
-    'Gio_KT',
-    'Thoi_Luong_Giay',
-    'Diem_KS',
-    'Ten_PVV',
-    'Email_PVV',
-    'Qua_Tang',
-    'Trang_Thai',
-    'Ly_Do_Dung',
-    'S1_ThamQuan4h',
-    'S2_ChiTra',
-    'S3_GioiTinh',
-    'S4_DoTuoi',
-    'S5_QuocTich',
-    'S5_Khac',
-    'Nguon_Khach',
-    'S6_NhomDiCung',
-    'S7_HinhThucChuyenDi',
-    'S8_SoLanDen',
-    'S9_GoiVe',
-    'A1_ChiTieuDuKien',
-    'A2_DichVuDaDung',
-    'A3_LyDoChuaDung',
-    'A3_Khac',
-    'A3_1_DaAnODau',
-    'A3_2_GiaSanSangChi',
-    'A3_3_MonMongMuon',
-    'A3_4_KhaNangSuDung',
-    'A4_ChiTieuThucTe',
-    'A4_1_ChiThemThucTe',
-    'A5_Buffet',
-    'A5_Alacarte',
-    'A5_Fastfood',
-    'A5_BanhKem',
-    'A5_DoUong',
-    'A5_QuaMangVe',
-    'A6_ThoiDiemQuyetDinh',
-    'A6_Khac',
-    'A7_SanSangChiThem',
-    'A8_MucDuKienChiThem',
-    'B1_SanPhamQuanTam',
-    'B1_Khac',
-    'B2_HinhThucPhucVu',
-    'B3_1_DoCay',
-    'B3_2_HuongVi',
-    'B3_3_NhietDo',
-    'B4_GiaBuffet',
-    'B4_GiaAlacarte',
-    'B4_GiaFastfood',
-    'B4_GiaDoUong',
-    'B4_GiaBanhKem',
-    'B5_1_HuuHinh',
-    'B5_2_ChatLuong',
-    'B5_3_TinCay',
-    'B5_4_ThaiDo',
-    'B5_5_ThauCam',
-    'B5_6_TienLoi',
-    'C1_KhungGioNhuCau',
-    'C2_NhuCauDacBiet',
-    'C2_Khac',
-    'C3_DeXuatCaiThien',
-    'C3_Khac',
-    'C4_GhiChuMo',
-    ...customHeaderCols,
+  // Đảm bảo tất cả câu hỏi gốc luôn có mặt kể cả khi thiếu trong tham số truyền vào
+  FALLBACK_BUILTIN_QUESTIONS.forEach((fb) => {
+    if (!seenQKeys.has(fb.key)) {
+      seenQKeys.add(fb.key);
+      configuredQuestions.push(fb);
+    }
+  });
+
+  // Bổ sung các customQuestions truyền qua thuộc tính cũ nếu chưa có
+  (opts?.customQuestions || []).forEach((cq) => {
+    if (!seenQKeys.has(cq.key)) {
+      seenQKeys.add(cq.key);
+      configuredQuestions.push(cq);
+    }
+  });
+
+  const cols: StructuredReportColumn[] = [];
+
+  // ============================================================================
+  // 1. NHÓM THÔNG TIN ĐỊNH DANH & QUẢN LÝ PHIÊN KHẢO SÁT (16 CỘT)
+  // ============================================================================
+  cols.push(
+    {
+      code: 'STT',
+      label: '[ĐỊNH DANH] Số thứ tự bản ghi',
+      section: 'META',
+      getValue: (_r, idx) => idx + 1,
+    },
+    {
+      code: 'ID_He_Thong',
+      label: '[ĐỊNH DANH] Mã ID bản ghi hệ thống',
+      section: 'META',
+      getValue: (r) => r.id || '',
+    },
+    {
+      code: 'Ma_Phieu',
+      label: '[ĐỊNH DANH] Mã phiếu khảo sát',
+      section: 'META',
+      getValue: (r) => r.surveyCode || '',
+    },
+    {
+      code: 'Trang_Thai_Phieu',
+      label: '[ĐỊNH DANH] Trạng thái hoàn thành phiếu',
+      section: 'META',
+      getValue: (r) => {
+        if (valueMode === 'code_only') return r.status === 'completed' ? 1 : 0;
+        if (valueMode === 'label_only') {
+          return r.status === 'completed' ? 'Hoàn thành hợp lệ' : 'Dừng sàng lọc (Screen-out)';
+        }
+        return r.status === 'completed'
+          ? '1 - Hoàn thành hợp lệ (Completed)'
+          : '0 - Dừng sàng lọc (Screen-out)';
+      },
+    },
+    {
+      code: 'Ly_Do_Screenout',
+      label: '[ĐỊNH DANH] Lý do dừng sàng lọc (nếu Screen-out)',
+      section: 'META',
+      getValue: (r) => r.screenoutReason || '',
+    },
+    {
+      code: 'Ngay_KS',
+      label: '[ĐỊNH DANH] Ngày khảo sát (YYYY-MM-DD)',
+      section: 'META',
+      getValue: (r) => r.surveyDate || '',
+    },
+    {
+      code: 'Gio_BD',
+      label: '[ĐỊNH DANH] Giờ bắt đầu phỏng vấn',
+      section: 'META',
+      getValue: (r) => r.startTime || '',
+    },
+    {
+      code: 'Gio_KT',
+      label: '[ĐỊNH DANH] Giờ kết thúc phỏng vấn',
+      section: 'META',
+      getValue: (r) => r.endTime || '',
+    },
+    {
+      code: 'Thoi_Luong_Giay',
+      label: '[ĐỊNH DANH] Thời lượng thực hiện (Giây)',
+      section: 'META',
+      getValue: (r) => r.durationSeconds ?? 0,
+    },
+    {
+      code: 'Thoi_Luong_Phut',
+      label: '[ĐỊNH DANH] Thời lượng thực hiện (Phút)',
+      section: 'META',
+      getValue: (r) =>
+        typeof r.durationSeconds === 'number'
+          ? Number((r.durationSeconds / 60).toFixed(2))
+          : 0,
+    },
+    {
+      code: 'Ma_Diem_KS',
+      label: '[ĐỊNH DANH] Mã vị trí khảo sát',
+      section: 'META',
+      getValue: (r) => r.locationId ?? '',
+    },
+    {
+      code: 'Ten_Diem_KS',
+      label: '[ĐỊNH DANH] Tên điểm khảo sát tại Bà Nà Hills',
+      section: 'META',
+      getValue: (r) => {
+        const locObj = locs.find((l) => l.id === r.locationId);
+        return locObj ? locObj.name : `Điểm #${r.locationId}`;
+      },
+    },
+    {
+      code: 'Ten_PVV',
+      label: '[ĐỊNH DANH] Họ tên Phỏng vấn viên (PVV)',
+      section: 'META',
+      getValue: (r) => r.interviewerName || '',
+    },
+    {
+      code: 'Email_PVV',
+      label: '[ĐỊNH DANH] Email tài khoản Phỏng vấn viên',
+      section: 'META',
+      getValue: (r) => r.interviewerEmail || '',
+    },
+    {
+      code: 'Qua_Tang',
+      label: '[ĐỊNH DANH] Quà tặng đáp viên',
+      section: 'META',
+      getValue: (r) => r.giftName || '',
+    },
+    {
+      code: 'Dong_Bo_Cloud',
+      label: '[ĐỊNH DANH] Trạng thái đồng bộ Cloud Firestore',
+      section: 'META',
+      getValue: (r) => (r.syncedToCloud ? 'Đã đồng bộ Cloud' : 'Lưu cục bộ máy'),
+    }
+  );
+
+  // ============================================================================
+  // 2. DUYỆT TOÀN BỘ CÂU HỎI THEO THỨ TỰ CẤU TRÚC (PHẦN S, A, B, C & MỞ RỘNG)
+  // ============================================================================
+  let insertedA5Matrix = false;
+  let insertedB4Matrix = false;
+
+  const appendA5MatrixColumns = () => {
+    if (insertedA5Matrix) return;
+    insertedA5Matrix = true;
+    A5_ROWS.forEach((row) => {
+      cols.push({
+        code: `A5_${row.key}`,
+        label: `[PHẦN A] A5 (${row.label}) - Mức chi tiêu bình quân 1 người`,
+        section: 'PHẦN A',
+        getValue: (r) => formatSingleWithList(r.A5?.[row.key], A5_COLUMNS),
+      });
+    });
+  };
+
+  const appendB4MatrixColumns = () => {
+    if (insertedB4Matrix) return;
+    insertedB4Matrix = true;
+    B4_ROWS.forEach((row) => {
+      cols.push({
+        code: `B4_${row.key}`,
+        label: `[PHẦN B] B4 (${row.label}) - Cảm nhận mức giá hiện tại (1: Đắt, 2: Hợp lý, 3: Rẻ)`,
+        section: 'PHẦN B',
+        getValue: (r) => {
+          const val = r.B4?.[row.key];
+          if (val === null || val === undefined) return '';
+          return formatSingleWithList(val, [
+            ...B4_PERCEPTION_OPTIONS,
+            ...row.options.filter((o) => o.code > 3),
+          ]);
+        },
+      });
+    });
+  };
+
+  const legacyOtherKeys = new Set(['S5', 'A3', 'A6', 'B1', 'C2', 'C3']);
+
+  configuredQuestions.forEach((q) => {
+    const sec: ReportSectionId =
+      q.section === 'PHẦN S' ||
+      q.section === 'PHẦN A' ||
+      q.section === 'PHẦN B' ||
+      q.section === 'PHẦN C'
+        ? q.section
+        : q.key.startsWith('S')
+        ? 'PHẦN S'
+        : q.key.startsWith('A')
+        ? 'PHẦN A'
+        : q.key.startsWith('B')
+        ? 'PHẦN B'
+        : 'PHẦN C';
+
+    const subPrefix = q.parentQuestionKey ? `(Câu con của ${q.parentQuestionKey}) ` : '';
+
+    if (q.type === 'likert') {
+      const scaleLabels =
+        Array.isArray(q.likertScale) && q.likertScale.length === 5
+          ? q.likertScale
+          : DEFAULT_LIKERT_IMPORTANCE_SCALE;
+
+      const rowOpts =
+        Array.isArray(q.options) && q.options.length > 0
+          ? q.options
+          : q.key === 'B5'
+          ? B5_ITEMS.map((item, idx) => ({
+              code: idx + 1,
+              rowCode: item.code,
+              label: `${item.dimension}: ${item.label}`,
+              en: item.en,
+            }))
+          : [];
+
+      rowOpts.forEach((rowOpt, idx) => {
+        const rowNum = rowOpt.code || idx + 1;
+        const displayRowCode = rowOpt.rowCode || `${q.key.replace('_', '.')}.${rowNum}`;
+        const safeColCode = displayRowCode.replace(/[^a-zA-Z0-9_]/g, '_');
+
+        cols.push({
+          code: safeColCode,
+          label: `[${sec}] ${subPrefix}${displayRowCode} - ${rowOpt.label} (Thang Likert 1-5)`,
+          section: sec,
+          getValue: (r) => {
+            const score = getLikertRowAnswer(r, q.key, rowNum);
+            return formatLikertScore(score, scaleLabels);
+          },
+        });
+      });
+
+      // Cột điểm trung bình cộng của bảng Likert nhiều dòng này
+      cols.push({
+        code: `${q.key}_Diem_TB`,
+        label: `[${sec}] ${q.key} - Điểm trung bình cộng các tiêu chí (Mean Score / 5.0)`,
+        section: sec,
+        getValue: (r) => {
+          const scores = rowOpts
+            .map((ro, idx) => getLikertRowAnswer(r, q.key, ro.code || idx + 1))
+            .filter((v): v is number => typeof v === 'number' && v >= 1 && v <= 5);
+          if (scores.length === 0) return '';
+          const avg = scores.reduce((acc, cur) => acc + cur, 0) / scores.length;
+          return Number(avg.toFixed(2));
+        },
+      });
+    } else if (q.type === 'single') {
+      cols.push({
+        code: q.key,
+        label: `[${sec}] ${subPrefix}${q.title}`,
+        section: sec,
+        getValue: (r) => formatSingle(q.key, getSingleAnswer(r, q.key), q.options),
+      });
+
+      // Sau S5 xuất thêm cột Phân khúc thị trường (Nội địa / Quốc tế)
+      if (q.key === 'S5') {
+        cols.push({
+          code: 'S5_Phan_Khuc_Khach',
+          label: '[PHẦN S] Phân khúc thị trường khách (Nội địa / Quốc tế)',
+          section: 'PHẦN S',
+          getValue: (r) => {
+            const s5 = getSingleAnswer(r, 'S5');
+            if (s5 === null) return '';
+            const isDom = s5 >= 1 && s5 <= 4;
+            if (valueMode === 'code_only') return isDom ? 1 : 2;
+            if (valueMode === 'label_only') return isDom ? 'Khách Nội địa' : 'Khách Quốc tế';
+            return isDom ? '1 - Khách Nội địa' : '2 - Khách Quốc tế';
+          },
+        });
+      }
+
+      // Sau A1 xuất thêm trạng thái khóa ngân sách dự kiến A1
+      if (q.key === 'A1') {
+        cols.push({
+          code: 'A1_Da_Khoa',
+          label: '[PHẦN A] A1 - Trạng thái khóa ngân sách dự kiến',
+          section: 'PHẦN A',
+          getValue: (r) => (r.A1_locked ? 'Đã khóa (Locked)' : 'Chưa khóa'),
+        });
+      }
+    } else if (q.type === 'multi') {
+      cols.push({
+        code: q.key,
+        label: `[${sec}] ${subPrefix}${q.title}`,
+        section: sec,
+        getValue: (r) => formatMulti(q.key, getMultiAnswer(r, q.key), q.options),
+      });
+
+      cols.push({
+        code: `${q.key}_So_Lua_Chon`,
+        label: `[${sec}] ${q.key} - Số lượng phương án đã chọn`,
+        section: sec,
+        getValue: (r) => {
+          const arr = getMultiAnswer(r, q.key);
+          return arr.length > 0 ? arr.length : '';
+        },
+      });
+
+      // Sau A2 xuất thêm cột Phân nhóm Đã dùng F&B vs Chưa dùng F&B
+      if (q.key === 'A2') {
+        cols.push({
+          code: 'A2_Trang_Thai_FnB',
+          label: '[PHẦN A] Phân nhóm hành vi sử dụng dịch vụ F&B (Đã dùng vs Chưa dùng)',
+          section: 'PHẦN A',
+          getValue: (r) => {
+            const a2 = getMultiAnswer(r, 'A2');
+            if (!a2 || a2.length === 0) return '';
+            const notUsed = a2.includes(7);
+            if (valueMode === 'code_only') return notUsed ? 0 : 1;
+            if (valueMode === 'label_only') {
+              return notUsed ? 'Chưa sử dụng F&B' : 'Đã sử dụng F&B';
+            }
+            return notUsed ? '0 - Chưa sử dụng F&B (A2=7)' : '1 - Đã sử dụng F&B (A2=1..6)';
+          },
+        });
+      }
+    } else {
+      // Câu hỏi tự luận (text)
+      cols.push({
+        code: q.key,
+        label: `[${sec}] ${subPrefix}${q.title}`,
+        section: sec,
+        getValue: (r) => getTextAnswer(r, q.key),
+      });
+    }
+
+    // Kiểm tra xem câu hỏi này có phương án "Khác (ghi rõ)" hoặc dữ liệu otherInputs hay không
+    const hasOtherOpt =
+      legacyOtherKeys.has(q.key) ||
+      q.hasOtherInput ||
+      (Array.isArray(q.options) && q.options.some((o) => o.hasOtherInput)) ||
+      responses.some((r) => Boolean(getOtherInputAnswer(r, q.key)));
+
+    if (hasOtherOpt && q.type !== 'text' && q.type !== 'likert') {
+      cols.push({
+        code: `${q.key}_Khac`,
+        label: `[${sec}] ${q.key} - Nội dung ghi rõ "Khác"`,
+        section: sec,
+        getValue: (r) => getOtherInputAnswer(r, q.key),
+      });
+    }
+
+    // Đính kèm Ma trận A5 ngay sau A4_1 (hoặc sau A4 nếu A4_1 không nằm liền kề)
+    if (q.key === 'A4_1') {
+      appendA5MatrixColumns();
+    }
+    // Đính kèm Ma trận B4 ngay sau B3_3
+    if (q.key === 'B3_3') {
+      appendB4MatrixColumns();
+    }
+  });
+
+  if (!insertedA5Matrix) appendA5MatrixColumns();
+  if (!insertedB4Matrix) appendB4MatrixColumns();
+
+  // Cột C4_GhiChuMo luôn nằm cuối Phần C
+  cols.push({
+    code: 'C4_GhiChuMo',
+    label: '[PHẦN C] C4. Ý kiến đóng góp mở / Ghi chú bổ sung của đáp viên',
+    section: 'PHẦN C',
+    getValue: (r) => r.C4_note || '',
+  });
+
+  // ============================================================================
+  // 3. QUÉT BỔ SUNG DỮ LIỆU MỞ RỘNG TRONG customAnswers / otherInputs (ĐẢM BẢO 0% SÓT)
+  // ============================================================================
+  const exportedColCodes = new Set(cols.map((c) => c.code));
+  const extraCustomKeys = new Set<string>();
+  const extraOtherKeys = new Set<string>();
+
+  responses.forEach((r) => {
+    if (r.customAnswers) {
+      Object.keys(r.customAnswers).forEach((k) => {
+        // Nếu là dòng Likert dạng qKey__rowCode đã được xuất qua câu Likert thì bỏ qua
+        if (k.includes('__')) {
+          const [qKey, rCodeStr] = k.split('__');
+          const standardCode = `${qKey}_${rCodeStr}`;
+          if (exportedColCodes.has(standardCode) || seenQKeys.has(qKey)) return;
+        }
+        if (!seenQKeys.has(k) && !exportedColCodes.has(k)) {
+          extraCustomKeys.add(k);
+        }
+      });
+    }
+    if (r.otherInputs) {
+      Object.keys(r.otherInputs).forEach((k) => {
+        if (!exportedColCodes.has(`${k}_Khac`)) {
+          extraOtherKeys.add(k);
+        }
+      });
+    }
+  });
+
+  extraCustomKeys.forEach((k) => {
+    cols.push({
+      code: `Custom_${k}`,
+      label: `[MỞ RỘNG] Câu hỏi bổ sung (${k})`,
+      section: 'MỞ RỘNG',
+      getValue: (r) => {
+        const v = r.customAnswers?.[k];
+        if (v === null || v === undefined) return '';
+        return Array.isArray(v) ? v.join(multiSep) : String(v);
+      },
+    });
+  });
+
+  extraOtherKeys.forEach((k) => {
+    cols.push({
+      code: `${k}_Khac`,
+      label: `[MỞ RỘNG] ${k} - Nội dung ghi rõ "Khác"`,
+      section: 'MỞ RỘNG',
+      getValue: (r) => getOtherInputAnswer(r, k),
+    });
+  });
+
+  return cols;
+}
+
+/**
+ * Trích xuất toàn bộ thông tin câu trả lời của 1 phiếu khảo sát thành các Phân nhóm rõ ràng
+ * để hiển thị trong Modal "Xem chi tiết phiếu khảo sát" (100% trường dữ liệu).
+ */
+export function getStructuredResponseDetailSections(
+  response: SurveyResponseData,
+  opts?: CsvExportOptions
+): StructuredDetailSection[] {
+  const columns = buildStructuredReportColumns([response], {
+    ...opts,
+    valueMode: 'code_and_label',
+  });
+
+  const sectionTitleMap: Record<ReportSectionId, string> = {
+    META: '1. Thông tin Định danh & Phiên khảo sát',
+    'PHẦN S': '2. Phần S — Sàng lọc & Nhân khẩu học',
+    'PHẦN A': '3. Phần A — Hành vi Chi tiêu & Sử dụng Dịch vụ F&B (Gồm Ma trận A5)',
+    'PHẦN B': '4. Phần B — Nhu cầu, Khẩu vị, Cảm nhận Giá (B4) & Đánh giá SERVQUAL (B5)',
+    'PHẦN C': '5. Phần C — Kỳ vọng Khung giờ, Nhu cầu Đặc biệt & Đề xuất Cải thiện',
+    'MỞ RỘNG': '6. Câu hỏi Mở rộng & Dữ liệu Bổ sung',
+  };
+
+  const sectionOrder: ReportSectionId[] = [
+    'META',
+    'PHẦN S',
+    'PHẦN A',
+    'PHẦN B',
+    'PHẦN C',
+    'MỞ RỘNG',
   ];
+
+  const grouped: Record<ReportSectionId, StructuredDetailField[]> = {
+    META: [],
+    'PHẦN S': [],
+    'PHẦN A': [],
+    'PHẦN B': [],
+    'PHẦN C': [],
+    'MỞ RỘNG': [],
+  };
+
+  columns.forEach((col) => {
+    if (col.code === 'STT') return;
+    const rawVal = col.getValue(response, 0);
+    const strVal = rawVal === null || rawVal === undefined ? '' : String(rawVal).trim();
+    const cleanLabel = col.label.replace(/^\[[^\]]+\]\s*/, '');
+    grouped[col.section].push({
+      code: col.code,
+      label: cleanLabel,
+      value: strVal,
+      isEmpty: strVal === '',
+    });
+  });
+
+  return sectionOrder
+    .filter((sec) => grouped[sec].length > 0)
+    .map((sec) => ({
+      section: sec,
+      sectionTitle: sectionTitleMap[sec],
+      fields: grouped[sec],
+    }));
+}
+
+/**
+ * Xuất báo cáo CSV chuẩn UTF-8 BOM với cấu trúc 2 dòng tiêu đề:
+ * - Dòng 1: Mã biến chuẩn (VD: S1, A2, A5_buffet, B4_buffet, B5_1...)
+ * - Dòng 2: [Phần] Nội dung câu hỏi / tiêu chí đầy đủ bằng tiếng Việt
+ */
+export function exportResponsesToCsv(
+  responses: SurveyResponseData[],
+  opts?: CsvExportOptions
+): void {
+  const delimiter = opts?.delimiter || ',';
+  const multiSep = opts?.multiSelectSeparator || '; ';
+  const includeTitleRow = opts?.includeQuestionTitleRow !== false;
+
+  const cols = buildStructuredReportColumns(responses, opts);
 
   const escapeCsv = (val: unknown): string => {
     if (val === null || val === undefined) return '';
     const str = Array.isArray(val) ? val.join(multiSep) : String(val);
-    if (str.includes(delimiter) || str.includes('"') || str.includes('\n')) {
+    if (str.includes(delimiter) || str.includes('"') || str.includes('\n') || str.includes('\r')) {
       return `"${str.replace(/"/g, '""')}"`;
     }
     return str;
   };
 
-  const rows = responses.map((r) => {
-    const isDomestic = r.S5 !== null && r.S5 >= 1 && r.S5 <= 4;
-    const guestSource = r.S5 === null ? '' : isDomestic ? 'Nội địa' : 'Quốc tế';
-    const locObj = locs.find((l) => l.id === r.locationId);
-    const locDisplay =
-      valueMode === 'code_only'
-        ? r.locationId
-        : valueMode === 'label_only'
-        ? locObj?.name || r.locationId
-        : `${r.locationId} - ${locObj?.name || ''}`;
+  const headerCodeRow = cols.map((c) => escapeCsv(c.code)).join(delimiter);
+  const headerLabelRow = cols.map((c) => escapeCsv(c.label)).join(delimiter);
 
-    const customCols: (string | number | null)[] = [];
-    (opts?.customQuestions || []).forEach((cq) => {
-      if (cq.type === 'likert') {
-        cq.options.forEach((rowOpt) => {
-          const score = getLikertRowAnswer(r, cq.key, rowOpt.code);
-          customCols.push(formatLikertScore(score, cq.likertScale));
-        });
-      } else if (cq.type === 'single') {
-        const val = getSingleAnswer(r, cq.key);
-        customCols.push(formatSingle(cq.key, val, cq.options));
-      } else if (cq.type === 'multi') {
-        const val = getMultiAnswer(r, cq.key);
-        customCols.push(formatMulti(cq.key, val, cq.options));
-      } else {
-        customCols.push(getTextAnswer(r, cq.key));
-      }
-    });
+  const dataRows = responses.map((r, idx) =>
+    cols.map((c) => escapeCsv(c.getValue(r, idx))).join(delimiter)
+  );
 
-    return [
-      r.id,
-      r.surveyCode,
-      r.surveyDate,
-      r.startTime,
-      r.endTime,
-      r.durationSeconds,
-      locDisplay,
-      r.interviewerName,
-      r.interviewerEmail,
-      r.giftName,
-      r.status,
-      r.screenoutReason || '',
-      formatSingle('S1', r.S1, S1_OPTIONS),
-      formatSingle('S2', r.S2, S2_OPTIONS),
-      formatSingle('S3', r.S3, S3_OPTIONS),
-      formatSingle('S4', r.S4, S4_OPTIONS),
-      formatSingle('S5', r.S5, S5_OPTIONS),
-      r.S5_other,
-      guestSource,
-      formatSingle('S6', r.S6, S6_OPTIONS),
-      formatSingle('S7', r.S7, S7_OPTIONS),
-      formatSingle('S8', r.S8, S8_OPTIONS),
-      formatSingle('S9', r.S9, S9_OPTIONS),
-      formatSingle('A1', r.A1, A1_OPTIONS),
-      formatMulti('A2', r.A2, A2_OPTIONS),
-      formatMulti('A3', r.A3, A3_OPTIONS),
-      r.A3_other,
-      r.A3_1,
-      r.A3_2,
-      r.A3_3,
-      formatSingle('A3_4', r.A3_4, A3_4_OPTIONS),
-      formatSingle('A4', r.A4, A4_OPTIONS),
-      formatSingle('A4_1', r.A4_1, A4_1_OPTIONS),
-      r.A5?.buffet,
-      r.A5?.alacarte,
-      r.A5?.fastfood,
-      r.A5?.pastry,
-      r.A5?.beverage,
-      r.A5?.souvenir,
-      formatMulti('A6', r.A6, A6_OPTIONS),
-      r.A6_other,
-      formatSingle('A7', r.A7, A7_OPTIONS),
-      formatSingle('A8', r.A8, A8_OPTIONS),
-      formatMulti('B1', r.B1, B1_OPTIONS),
-      r.B1_other,
-      formatMulti('B2', r.B2, B2_OPTIONS),
-      formatSingle('B3_1', r.B3_1, B3_1_OPTIONS),
-      formatSingle('B3_2', r.B3_2, B3_2_OPTIONS),
-      formatSingle('B3_3', r.B3_3, B3_3_OPTIONS),
-      r.B4?.buffet,
-      r.B4?.alacarte,
-      r.B4?.fastfood,
-      r.B4?.beverage,
-      r.B4?.pastry,
-      r.B5?.B5_1,
-      r.B5?.B5_2,
-      r.B5?.B5_3,
-      r.B5?.B5_4,
-      r.B5?.B5_5,
-      r.B5?.B5_6,
-      formatMulti('C1', r.C1, C1_OPTIONS),
-      formatMulti('C2', r.C2, C2_OPTIONS),
-      r.C2_other,
-      formatMulti('C3', r.C3, C3_OPTIONS),
-      r.C3_other,
-      r.C4_note,
-      ...customCols,
-    ]
-      .map(escapeCsv)
-      .join(delimiter);
-  });
+  const allLines = includeTitleRow
+    ? [headerCodeRow, headerLabelRow, ...dataRows]
+    : [headerCodeRow, ...dataRows];
 
-  const csvContent = '\uFEFF' + [headers.join(delimiter), ...rows].join('\n');
+  const csvContent = '\uFEFF' + allLines.join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `BaNaHills_FnB_Survey_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `BaNaHills_FnB_Survey_FullStructured_${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Xuất Báo cáo Excel (.xls) có định dạng bảng biểu, phân nhóm màu sắc theo từng Phần khảo sát
+ * (Định danh, Phần S, Phần A + Ma trận A5, Phần B + Ma trận B4 & Likert B5, Phần C),
+ * hiển thị đầy đủ 100% thông tin khảo sát.
+ */
+export function exportResponsesToExcel(
+  responses: SurveyResponseData[],
+  opts?: CsvExportOptions
+): void {
+  const cols = buildStructuredReportColumns(responses, opts);
+
+  const escapeHtml = (val: unknown): string => {
+    if (val === null || val === undefined) return '';
+    return String(val)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  };
+
+  const sectionMeta: Record<
+    ReportSectionId,
+    { title: string; bgHeader: string; bgSubHeader: string; textColor: string }
+  > = {
+    META: {
+      title: 'NHÓM 1: THÔNG TIN ĐỊNH DANH & QUẢN LÝ PHIÊN KHẢO SÁT',
+      bgHeader: '#1e293b',
+      bgSubHeader: '#334155',
+      textColor: '#ffffff',
+    },
+    'PHẦN S': {
+      title: 'NHÓM 2: PHẦN S — SÀNG LỌC & NHÂN KHẨU HỌC ĐÁP VIÊN',
+      bgHeader: '#991b1b',
+      bgSubHeader: '#b91c1c',
+      textColor: '#ffffff',
+    },
+    'PHẦN A': {
+      title: 'NHÓM 3: PHẦN A — HÀNH VI TIÊU DÙNG, CHI TIÊU F&B & MA TRẬN A5',
+      bgHeader: '#0369a1',
+      bgSubHeader: '#0284c7',
+      textColor: '#ffffff',
+    },
+    'PHẦN B': {
+      title: 'NHÓM 4: PHẦN B — KHẨU VỊ, CẢM NHẬN GIÁ (B4) & MA TRẬN LIKERT SERVQUAL (B5)',
+      bgHeader: '#047857',
+      bgSubHeader: '#059669',
+      textColor: '#ffffff',
+    },
+    'PHẦN C': {
+      title: 'NHÓM 5: PHẦN C — KỲ VỌNG KHUNG GIỜ, NHU CẦU ĐẶC BIỆT & ĐỀ XUẤT CẢI THIỆN',
+      bgHeader: '#6d28d9',
+      bgSubHeader: '#7c3aed',
+      textColor: '#ffffff',
+    },
+    'MỞ RỘNG': {
+      title: 'NHÓM 6: CÂU HỎI MỞ RỘNG BỔ SUNG',
+      bgHeader: '#b45309',
+      bgSubHeader: '#d97706',
+      textColor: '#ffffff',
+    },
+  };
+
+  // Tính colspan cho từng nhóm Section liên tiếp
+  const sectionSpans: { section: ReportSectionId; count: number }[] = [];
+  cols.forEach((c) => {
+    const last = sectionSpans[sectionSpans.length - 1];
+    if (last && last.section === c.section) {
+      last.count += 1;
+    } else {
+      sectionSpans.push({ section: c.section, count: 1 });
+    }
+  });
+
+  const completedCount = responses.filter((r) => r.status === 'completed').length;
+  const screenoutCount = responses.filter((r) => r.status === 'screenout').length;
+  const nowStr = new Date().toLocaleString('vi-VN');
+
+  const sectionGroupRowHtml = sectionSpans
+    .map((sp) => {
+      const style = sectionMeta[sp.section];
+      return `<th colspan="${sp.count}" style="background:${style.bgHeader};color:${style.textColor};font-weight:bold;font-size:11pt;padding:8px 10px;border:1px solid #cbd5e1;text-align:center;">${escapeHtml(
+        style.title
+      )}</th>`;
+    })
+    .join('');
+
+  const codeRowHtml = cols
+    .map((c) => {
+      const style = sectionMeta[c.section];
+      return `<th style="background:${style.bgSubHeader};color:#ffffff;font-weight:bold;font-family:Consolas,monospace;font-size:10pt;padding:6px 8px;border:1px solid #cbd5e1;text-align:center;white-space:nowrap;">${escapeHtml(
+        c.code
+      )}</th>`;
+    })
+    .join('');
+
+  const labelRowHtml = cols
+    .map((c) => {
+      const cleanLabel = c.label.replace(/^\[[^\]]+\]\s*/, '');
+      return `<th style="background:#f1f5f9;color:#0f172a;font-weight:bold;font-size:9.5pt;padding:8px;border:1px solid #cbd5e1;text-align:left;min-width:150px;vertical-align:top;">${escapeHtml(
+        cleanLabel
+      )}</th>`;
+    })
+    .join('');
+
+  const bodyRowsHtml = responses
+    .map((r, idx) => {
+      const rowBg = r.status === 'screenout' ? '#fffbeb' : idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+      const cells = cols
+        .map((c) => {
+          const val = c.getValue(r, idx);
+          const isNumeric = typeof val === 'number';
+          return `<td style="background:${rowBg};color:#0f172a;font-size:9.5pt;padding:6px 8px;border:1px solid #e2e8f0;vertical-align:top;${
+            isNumeric ? 'text-align:right;mso-number-format:\'0\\.00\';' : 'mso-number-format:\'\\@\';'
+          }">${escapeHtml(val)}</td>`;
+        })
+        .join('');
+      return `<tr>${cells}</tr>`;
+    })
+    .join('');
+
+  const html = `
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:x="urn:schemas-microsoft-com:office:excel"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+  <meta charset="UTF-8" />
+  <!--[if gte mso 9]>
+  <xml>
+    <x:ExcelWorkbook>
+      <x:ExcelWorksheets>
+        <x:ExcelWorksheet>
+          <x:Name>DuLieuKhaoSat_FnB_BaNa</x:Name>
+          <x:WorksheetOptions>
+            <x:DisplayGridlines/>
+          </x:WorksheetOptions>
+        </x:ExcelWorksheet>
+      </x:ExcelWorksheets>
+    </x:ExcelWorkbook>
+  </xml>
+  <![endif]-->
+</head>
+<body style="font-family:Arial,sans-serif;">
+  <table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;">
+    <tr>
+      <td colspan="${cols.length}" style="background:#b91c1c;color:#ffffff;font-size:14pt;font-weight:bold;padding:12px;">
+        BÁO CÁO DỮ LIỆU KHẢO SÁT NHU CẦU &amp; HÀNH VI TIÊU DÙNG F&amp;B TẠI SUN WORLD BA NA HILLS (CẤU TRÚC ĐẦY ĐỦ 100%)
+      </td>
+    </tr>
+    <tr>
+      <td colspan="${cols.length}" style="background:#fef2f2;color:#7f1d1d;font-size:10pt;padding:8px;">
+        <b>Thời điểm kết xuất:</b> ${escapeHtml(nowStr)} &nbsp;|&nbsp;
+        <b>Tổng số phiếu:</b> ${responses.length} phiếu &nbsp;|&nbsp;
+        <b>Phiếu hoàn thành hợp lệ (Completed):</b> ${completedCount} phiếu &nbsp;|&nbsp;
+        <b>Phiếu dừng sàng lọc (Screen-out):</b> ${screenoutCount} phiếu &nbsp;|&nbsp;
+        <b>Tổng số trường dữ liệu (Cột):</b> ${cols.length} cột
+      </td>
+    </tr>
+    <tr>${sectionGroupRowHtml}</tr>
+    <tr>${codeRowHtml}</tr>
+    <tr>${labelRowHtml}</tr>
+    ${bodyRowsHtml}
+  </table>
+</body>
+</html>`;
+
+  const blob = new Blob(['\uFEFF' + html], {
+    type: 'application/vnd.ms-excel;charset=utf-8;',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `BaoCao_KhaoSat_FnB_BaNaHills_${new Date().toISOString().slice(0, 10)}.xls`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
