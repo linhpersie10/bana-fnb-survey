@@ -1,37 +1,16 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Filter,
-  RotateCcw,
-  FileSpreadsheet,
   Download,
-  TrendingUp,
-  Users,
-  Utensils,
-  Wallet,
-  Star,
-  MapPin,
-  BarChart3,
-  PieChart,
-  Layers,
-  MessageSquareQuote,
-  CheckCircle2,
-  AlertCircle,
-  Sparkles,
-  Clock,
-  Table2,
-  Compass,
-  Award,
-  Calendar,
+  FileSpreadsheet,
+  SlidersHorizontal,
+  RotateCcw,
+  Search,
+  X,
 } from 'lucide-react';
 import {
   SurveyResponseData,
   OptionItem,
-  A5_ROWS,
-  A5_COLUMNS,
-  B4_ROWS,
-  B4_PERCEPTION_OPTIONS,
-  B5_ITEMS,
   S1_OPTIONS,
   S2_OPTIONS,
   S3_OPTIONS,
@@ -47,6 +26,8 @@ import {
   A3_4_OPTIONS,
   A4_OPTIONS,
   A4_1_OPTIONS,
+  A5_ROWS,
+  A5_COLUMNS,
   A6_OPTIONS,
   A7_OPTIONS,
   A8_OPTIONS,
@@ -55,23 +36,34 @@ import {
   B3_1_OPTIONS,
   B3_2_OPTIONS,
   B3_3_OPTIONS,
+  B4_ROWS,
+  B5_ITEMS,
   C1_OPTIONS,
   C2_OPTIONS,
   C3_OPTIONS,
+  CustomQuestionCsvMeta,
+  CsvExportOptions,
+  exportResponsesToCsv,
+  exportResponsesToExcel,
   getSingleAnswer,
   getMultiAnswer,
   getTextAnswer,
   getOtherInputAnswer,
   getLikertRowAnswer,
-  exportResponsesToCsv,
-  exportResponsesToExcel,
-  CustomQuestionCsvMeta,
-  CsvExportOptions,
 } from '../data/surveySchema';
+import { SurveySystemConfig, getLikertScaleLabels } from '../services/surveyConfig';
+import { TONES, CATEGORICAL_HEX, LIKERT_TONE_HEX } from '../lib/tones';
 import {
-  SurveySystemConfig,
-  getLikertScaleLabels,
-} from '../services/surveyConfig';
+  PageHeader,
+  StatCard,
+  SectionCard,
+  SegmentedToggle,
+  ActiveFilterChips,
+  FilterChipItem,
+  ProportionBreakdown,
+  RankedBarList,
+  BreakdownItem,
+} from './ui/ReportPrimitives';
 
 interface AnalyticsDashboardProps {
   responses: SurveyResponseData[];
@@ -82,285 +74,30 @@ interface AnalyticsDashboardProps {
   onClearPilotSamples?: () => void;
 }
 
-type DashboardViewTab =
-  | 'all'
+type ReportSectionTab =
   | 'overview'
   | 'spending'
   | 'preferences'
   | 'expectations'
-  | 'crosstab'
-  | 'explorer';
+  | 'crosstab';
 
-// Trọng số điểm giữa (Midpoint VNĐ) của các khoảng chi tiêu A1 & A4 để ước tính mức chi bình quân
+type CrossTabDimension = 'market_group' | 's5_detail' | 's7_mode' | 's9_ticket' | 's4_age' | 'location';
+
 const SPEND_TIER_MIDPOINTS: Record<number, number> = {
-  1: 100000, // Dưới 150.000đ
-  2: 225000, // 150.000 - <300.000đ
-  3: 350000, // 300.000 - <400.000đ
-  4: 450000, // 400.000 - <500.000đ
-  5: 600000, // 500.000 - <700.000đ
-  6: 850000, // 700.000 - <1.000.000đ
-  7: 1200000, // Từ 1.000.000đ trở lên
+  1: 100,
+  2: 200,
+  3: 300,
+  4: 450,
+  5: 625,
+  6: 875,
+  7: 1200,
 };
 
-const LIKERT_SCORE_COLORS = [
-  'bg-rose-500', // 1
-  'bg-orange-400', // 2
-  'bg-slate-300', // 3
-  'bg-sky-500', // 4
-  'bg-emerald-600', // 5
-];
-
-const LIKERT_TEXT_COLORS = [
-  'text-rose-600',
-  'text-orange-600',
-  'text-slate-600',
-  'text-sky-600',
-  'text-emerald-700',
-];
-
-const DONUT_PALETTE = [
-  '#d12f2f',
-  '#0284c7',
-  '#059669',
-  '#d97706',
-  '#7c3aed',
-  '#db2777',
-  '#4f46e5',
-  '#0d9488',
-  '#ea580c',
-  '#475569',
-];
-
-interface DonutSlice {
-  id: string;
-  label: string;
-  count: number;
-  pct: number;
-  color: string;
-  isSelected?: boolean;
-  onClick?: () => void;
+interface DrilldownState {
+  title: string;
+  subtitle?: string;
+  items: SurveyResponseData[];
 }
-
-/**
- * Biểu đồ Donut SVG tương tác có chuyển động mượt (`motion.circle`) khi lọc dữ liệu
- */
-const InteractiveDonutChart: React.FC<{
-  slices: DonutSlice[];
-  centerValue: string;
-  centerLabel: string;
-}> = ({ slices, centerValue, centerLabel }) => {
-  const size = 164;
-  const strokeWidth = 24;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const total = slices.reduce((acc, s) => acc + s.count, 0);
-
-  let cumulativeFraction = 0;
-
-  return (
-    <div className="flex flex-col sm:flex-row items-center gap-4">
-      <div className="relative shrink-0" style={{ width: size, height: size }}>
-        <svg width={size} height={size} className="-rotate-90">
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            fill="transparent"
-            stroke="#f1f5f9"
-            strokeWidth={strokeWidth}
-          />
-          {total > 0 &&
-            slices.map((slice) => {
-              const fraction = slice.count / total;
-              const dashLength = fraction * circumference;
-              const dashOffset = -cumulativeFraction * circumference;
-              cumulativeFraction += fraction;
-              if (slice.count === 0) return null;
-              return (
-                <motion.circle
-                  key={slice.id}
-                  cx={size / 2}
-                  cy={size / 2}
-                  r={radius}
-                  fill="transparent"
-                  stroke={slice.color}
-                  strokeWidth={slice.isSelected ? strokeWidth + 4 : strokeWidth}
-                  strokeDasharray={`${dashLength} ${circumference}`}
-                  initial={{ strokeDashoffset: circumference }}
-                  animate={{
-                    strokeDasharray: `${dashLength} ${circumference}`,
-                    strokeDashoffset: dashOffset,
-                  }}
-                  transition={{ type: 'spring', stiffness: 200, damping: 26 }}
-                  onClick={slice.onClick}
-                  className={slice.onClick ? 'cursor-pointer hover:opacity-85 transition-opacity' : ''}
-                >
-                  <title>{`${slice.label}: ${slice.count} phiếu (${slice.pct}%)`}</title>
-                </motion.circle>
-              );
-            })}
-        </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-3 pointer-events-none">
-          <motion.span
-            key={centerValue}
-            initial={{ scale: 0.85, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="text-xl font-black text-slate-900 tabular-nums leading-none"
-          >
-            {centerValue}
-          </motion.span>
-          <span className="text-[10px] font-bold text-slate-400 uppercase mt-1 leading-tight">
-            {centerLabel}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex-1 w-full space-y-1.5">
-        {slices.map((slice) => (
-          <div
-            key={slice.id}
-            onClick={slice.onClick}
-            className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl text-xs transition ${
-              slice.onClick ? 'cursor-pointer hover:bg-slate-100/80' : ''
-            } ${
-              slice.isSelected
-                ? 'bg-red-50/70 ring-1 ring-[#d12f2f] font-bold'
-                : 'bg-slate-50/70'
-            }`}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <span
-                className="w-2.5 h-2.5 rounded-full shrink-0"
-                style={{ backgroundColor: slice.color }}
-              />
-              <span className="text-slate-800 truncate">{slice.label}</span>
-            </div>
-            <span className="font-bold text-slate-900 shrink-0 tabular-nums">
-              {slice.count} <span className="text-slate-400 font-semibold">({slice.pct}%)</span>
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-/**
- * Biểu đồ Radar / Mạng nhện SVG động (`motion.polygon`) cho các chiều đánh giá Likert 5 mức (SERVQUAL B5)
- */
-const ServqualRadarChart: React.FC<{
-  rows: { displayCode: string; label: string; mean: number; top2Pct: number }[];
-}> = ({ rows }) => {
-  const activeRows = rows.slice(0, 8);
-  if (activeRows.length < 3) return null;
-
-  const size = 250;
-  const center = size / 2;
-  const maxRadius = 86;
-  const count = activeRows.length;
-
-  const getPoint = (index: number, valueOutOf5: number) => {
-    const angle = (Math.PI * 2 * index) / count - Math.PI / 2;
-    const r = (Math.max(0, Math.min(5, valueOutOf5)) / 5) * maxRadius;
-    return {
-      x: center + r * Math.cos(angle),
-      y: center + r * Math.sin(angle),
-    };
-  };
-
-  const polygonPoints = activeRows
-    .map((r, i) => {
-      const pt = getPoint(i, r.mean);
-      return `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
-    })
-    .join(' ');
-
-  return (
-    <div className="flex flex-col items-center justify-center">
-      <svg width={size} height={size} className="overflow-visible">
-        {/* Các vòng lưới thang điểm 1..5 */}
-        {[1, 2, 3, 4, 5].map((lvl) => {
-          const ringPts = activeRows
-            .map((_, i) => {
-              const pt = getPoint(i, lvl);
-              return `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
-            })
-            .join(' ');
-          return (
-            <polygon
-              key={lvl}
-              points={ringPts}
-              fill={lvl === 5 ? '#f8fafc' : 'none'}
-              stroke={lvl === 5 ? '#cbd5e1' : '#e2e8f0'}
-              strokeWidth={1}
-              strokeDasharray={lvl < 5 ? '2 2' : undefined}
-            />
-          );
-        })}
-
-        {/* Các trục nối từ tâm ra đỉnh */}
-        {activeRows.map((r, i) => {
-          const outer = getPoint(i, 5);
-          const labelPos = getPoint(i, 6.05);
-          return (
-            <g key={r.displayCode}>
-              <line
-                x1={center}
-                y1={center}
-                x2={outer.x}
-                y2={outer.y}
-                stroke="#cbd5e1"
-                strokeWidth={1}
-              />
-              <text
-                x={labelPos.x}
-                y={labelPos.y}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                className="fill-slate-800 text-[10px] font-bold"
-              >
-                {r.displayCode} ({r.mean.toFixed(2)})
-              </text>
-            </g>
-          );
-        })}
-
-        {/* Đa giác điểm trung bình động */}
-        <motion.polygon
-          initial={{ opacity: 0, scale: 0.5 }}
-          animate={{ opacity: 1, scale: 1, points: polygonPoints }}
-          transition={{ type: 'spring', stiffness: 200, damping: 24 }}
-          points={polygonPoints}
-          fill="rgba(209, 47, 47, 0.20)"
-          stroke="#d12f2f"
-          strokeWidth={2.5}
-        />
-
-        {/* Các nút đỉnh */}
-        {activeRows.map((r, i) => {
-          const pt = getPoint(i, r.mean);
-          return (
-            <motion.circle
-              key={r.displayCode}
-              initial={{ cx: center, cy: center }}
-              animate={{ cx: pt.x, cy: pt.y }}
-              transition={{ type: 'spring', stiffness: 220, damping: 24 }}
-              r={4.5}
-              fill="#d12f2f"
-              stroke="#ffffff"
-              strokeWidth={1.5}
-            >
-              <title>{`${r.displayCode} - ${r.label}: TB ${r.mean.toFixed(2)}/5.0`}</title>
-            </motion.circle>
-          );
-        })}
-      </svg>
-      <div className="text-[11px] text-slate-500 font-medium text-center mt-1">
-        Biểu đồ Radar 5 bậc tự động biến đổi hình học khi lọc phân khúc khách
-      </div>
-    </div>
-  );
-};
 
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   responses,
@@ -371,40 +108,80 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   onClearPilotSamples,
 }) => {
   // ============================================================================
-  // 1. MULTI-DIMENSIONAL INTERACTIVE FILTER STATE
+  // 1. MULTI-DIMENSIONAL FILTER STATE
   // ============================================================================
-  const [activeSubTab, setActiveSubTab] = useState<DashboardViewTab>('all');
+  const [activeSubTab, setActiveSubTab] = useState<ReportSectionTab>('overview');
+  const [showFilterPanel, setShowFilterPanel] = useState<boolean>(true);
+
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | '7days'>('all');
   const [statusFilter, setStatusFilter] = useState<'completed' | 'all' | 'screenout'>('completed');
   const [locationFilter, setLocationFilter] = useState<number | 'all'>('all');
   const [marketFilter, setMarketFilter] = useState<string>('all'); // 'all' | 'domestic' | 'international' | 'code:1'..
-  const [travelModeFilter, setTravelModeFilter] = useState<number | 'all'>('all'); // S7
-  const [ticketFilter, setTicketFilter] = useState<number | 'all'>('all'); // S9
-  const [fnbUsageFilter, setFnbUsageFilter] = useState<'all' | 'used' | 'not_used'>('all'); // A2
+  const [travelModeFilter, setTravelModeFilter] = useState<number | 'all'>('all');
+  const [ticketFilter, setTicketFilter] = useState<number | 'all'>('all');
+  const [fnbUsageFilter, setFnbUsageFilter] = useState<'all' | 'used' | 'not_used'>('all');
   const [interviewerFilter, setInterviewerFilter] = useState<string>('all');
-  const [explorerSectionFilter, setExplorerSectionFilter] = useState<string>('ALL');
 
-  const qOpts = (qKey: string, fallback: OptionItem[]): OptionItem[] => {
-    const cfgOpts = config.questions[qKey]?.options;
-    return Array.isArray(cfgOpts) && cfgOpts.length > 0 ? cfgOpts : fallback;
+  // Cross-filter bổ sung khi bấm trực tiếp vào bất kỳ biểu đồ nào
+  const [chartCrossFilter, setChartCrossFilter] = useState<{
+    questionKey: string;
+    questionLabel: string;
+    code: number;
+    optionLabel: string;
+    isMulti?: boolean;
+  } | null>(null);
+
+  // Điều khiển hiển thị trên từng thẻ phân tích
+  const [a5DisplayMode, setA5DisplayMode] = useState<'pct' | 'count'>('pct');
+  const [b3TierTab, setB3TierTab] = useState<'B3_1' | 'B3_2' | 'B3_3'>('B3_1');
+  const [b5SortMode, setB5SortMode] = useState<'mean' | 'code'>('mean');
+  const [crossTabDim, setCrossTabDim] = useState<CrossTabDimension>('market_group');
+  const [explorerSearch, setExplorerSearch] = useState<string>('');
+  const [explorerSection, setExplorerSection] = useState<'ALL' | 'S' | 'A' | 'B' | 'C'>('ALL');
+  const [verbatimFilterTag, setVerbatimFilterTag] = useState<string>('ALL');
+
+  // Drilldown Modal state (chuẩn Reports.tsx)
+  const [drilldown, setDrilldown] = useState<DrilldownState | null>(null);
+
+  const qOpts = (key: string, fallback: OptionItem[]): OptionItem[] => {
+    const q = config.questions[key];
+    return q && q.options && q.options.length > 0 ? q.options : fallback;
   };
 
-  // Danh sách Phỏng vấn viên duy nhất từ dữ liệu
   const interviewers = useMemo(() => {
     const map = new Map<string, string>();
     responses.forEach((r) => {
-      const key = r.interviewerEmail || r.interviewerName || r.interviewerUid;
-      if (key && !map.has(key)) {
-        map.set(key, r.interviewerName || r.interviewerEmail || key);
+      if (r.interviewerUid && r.interviewerName) {
+        map.set(r.interviewerUid, r.interviewerName);
       }
     });
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
   }, [responses]);
 
+  const applyQuickDatePreset = (preset: 'all' | 'today' | '7days') => {
+    setDatePreset(preset);
+    const today = new Date();
+    const toIso = (d: Date) => d.toISOString().slice(0, 10);
+    if (preset === 'all') {
+      setDateFrom('');
+      setDateTo('');
+    } else if (preset === 'today') {
+      const t = toIso(today);
+      setDateFrom(t);
+      setDateTo(t);
+    } else if (preset === '7days') {
+      const past = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
+      setDateFrom(toIso(past));
+      setDateTo(toIso(today));
+    }
+  };
+
   const resetAllFilters = () => {
     setDateFrom('');
     setDateTo('');
+    setDatePreset('all');
     setStatusFilter('completed');
     setLocationFilter('all');
     setMarketFilter('all');
@@ -412,102 +189,122 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     setTicketFilter('all');
     setFnbUsageFilter('all');
     setInterviewerFilter('all');
+    setChartCrossFilter(null);
   };
 
-  const applyQuickDatePreset = (preset: 'all' | 'today' | '7days') => {
-    if (preset === 'all') {
-      setDateFrom('');
-      setDateTo('');
-      return;
-    }
-    const now = new Date();
-    const todayStr = now.toISOString().slice(0, 10);
-    if (preset === 'today') {
-      setDateFrom(todayStr);
-      setDateTo(todayStr);
-    } else if (preset === '7days') {
-      const past = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
-      setDateFrom(past.toISOString().slice(0, 10));
-      setDateTo(todayStr);
-    }
-  };
-
-  // Tập dữ liệu khớp các điều kiện lọc (ngoại trừ statusFilter để tính phễu tiếp cận)
-  const baseContextResponses = useMemo(() => {
-    return responses.filter((r) => {
-      if (dateFrom && r.surveyDate < dateFrom) return false;
-      if (dateTo && r.surveyDate > dateTo) return false;
-      if (locationFilter !== 'all' && r.locationId !== locationFilter) return false;
-      if (interviewerFilter !== 'all') {
-        const pvvKey = r.interviewerEmail || r.interviewerName || r.interviewerUid;
-        if (pvvKey !== interviewerFilter) return false;
+  const toggleChartCrossFilter = (
+    questionKey: string,
+    questionLabel: string,
+    code: number,
+    optionLabel: string,
+    isMulti = false
+  ) => {
+    setChartCrossFilter((prev) => {
+      if (prev && prev.questionKey === questionKey && prev.code === code) {
+        return null;
       }
-      if (marketFilter !== 'all') {
-        const s5 = getSingleAnswer(r, 'S5');
-        if (s5 === null) return false;
-        if (marketFilter === 'domestic' && !(s5 >= 1 && s5 <= 4)) return false;
-        if (marketFilter === 'international' && !(s5 >= 5)) return false;
-        if (marketFilter.startsWith('code:')) {
-          const targetCode = Number(marketFilter.replace('code:', ''));
-          if (s5 !== targetCode) return false;
-        }
-      }
-      if (travelModeFilter !== 'all' && getSingleAnswer(r, 'S7') !== travelModeFilter) {
-        return false;
-      }
-      if (ticketFilter !== 'all' && getSingleAnswer(r, 'S9') !== ticketFilter) {
-        return false;
-      }
-      if (fnbUsageFilter !== 'all') {
-        const a2 = getMultiAnswer(r, 'A2');
-        if (!a2 || a2.length === 0) return false;
-        const isNotUsed = a2.includes(7);
-        if (fnbUsageFilter === 'used' && isNotUsed) return false;
-        if (fnbUsageFilter === 'not_used' && !isNotUsed) return false;
-      }
-      return true;
+      return { questionKey, questionLabel, code, optionLabel, isMulti };
     });
-  }, [
-    responses,
-    dateFrom,
-    dateTo,
-    locationFilter,
-    interviewerFilter,
-    marketFilter,
-    travelModeFilter,
-    ticketFilter,
-    fnbUsageFilter,
-  ]);
+  };
 
-  // Tập dữ liệu chính áp dụng đầy đủ cả statusFilter
-  const filteredResponses = useMemo(() => {
-    if (statusFilter === 'all') return baseContextResponses;
-    return baseContextResponses.filter((r) => r.status === statusFilter);
-  }, [baseContextResponses, statusFilter]);
+  // ============================================================================
+  // 2. REACTIVE FILTERED DATASETS
+  // ============================================================================
+  const matchesContextFilters = (r: SurveyResponseData): boolean => {
+    if (dateFrom && r.surveyDate < dateFrom) return false;
+    if (dateTo && r.surveyDate > dateTo) return false;
+    if (locationFilter !== 'all' && r.locationId !== locationFilter) return false;
+    if (interviewerFilter !== 'all' && r.interviewerUid !== interviewerFilter) return false;
 
-  // Tập phiếu hợp lệ trong phạm vi lọc để phân tích chuyên sâu Phần S, A, B, C
-  const validResponses = useMemo(
-    () =>
-      statusFilter === 'screenout'
-        ? filteredResponses
-        : filteredResponses.filter((r) => r.status === 'completed'),
-    [filteredResponses, statusFilter]
+    if (marketFilter !== 'all') {
+      const s5 = getSingleAnswer(r, 'S5');
+      if (marketFilter === 'domestic') {
+        if (s5 === null || s5 < 1 || s5 > 4) return false;
+      } else if (marketFilter === 'international') {
+        if (s5 === null || s5 < 5) return false;
+      } else if (marketFilter.startsWith('code:')) {
+        const targetCode = Number(marketFilter.replace('code:', ''));
+        if (s5 !== targetCode) return false;
+      }
+    }
+
+    if (travelModeFilter !== 'all') {
+      if (getSingleAnswer(r, 'S7') !== travelModeFilter) return false;
+    }
+
+    if (ticketFilter !== 'all') {
+      if (getSingleAnswer(r, 'S9') !== ticketFilter) return false;
+    }
+
+    if (fnbUsageFilter !== 'all') {
+      const a2 = getMultiAnswer(r, 'A2');
+      const notUsed = a2.includes(7);
+      const usedAny = a2.length > 0 && !notUsed;
+      if (fnbUsageFilter === 'used' && !usedAny) return false;
+      if (fnbUsageFilter === 'not_used' && !notUsed) return false;
+    }
+
+    if (chartCrossFilter) {
+      if (chartCrossFilter.isMulti) {
+        const arr = getMultiAnswer(r, chartCrossFilter.questionKey);
+        if (!arr.includes(chartCrossFilter.code)) return false;
+      } else {
+        const val = getSingleAnswer(r, chartCrossFilter.questionKey);
+        if (val !== chartCrossFilter.code) return false;
+      }
+    }
+
+    return true;
+  };
+
+  const baseContextResponses = useMemo(
+    () => responses.filter(matchesContextFilters),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      responses,
+      dateFrom,
+      dateTo,
+      locationFilter,
+      marketFilter,
+      travelModeFilter,
+      ticketFilter,
+      fnbUsageFilter,
+      interviewerFilter,
+      chartCrossFilter,
+    ]
   );
 
-  // Danh sách các nhãn Filter đang bật
-  const activeFilterChips = useMemo(() => {
-    const chips: { key: string; label: string; onClear: () => void }[] = [];
-    if (dateFrom) {
-      chips.push({ key: 'dateFrom', label: `Từ: ${dateFrom}`, onClear: () => setDateFrom('') });
-    }
-    if (dateTo) {
-      chips.push({ key: 'dateTo', label: `Đến: ${dateTo}`, onClear: () => setDateTo('') });
+  const filteredResponses = useMemo(() => {
+    return baseContextResponses.filter((r) => {
+      if (statusFilter === 'completed') return r.status === 'completed';
+      if (statusFilter === 'screenout') return r.status === 'screenout';
+      return true;
+    });
+  }, [baseContextResponses, statusFilter]);
+
+  const validResponses = useMemo(
+    () => baseContextResponses.filter((r) => r.status === 'completed'),
+    [baseContextResponses]
+  );
+
+  // Active Filter Chips (Chuẩn ActiveFilterChips.tsx)
+  const activeFilterChips = useMemo<FilterChipItem[]>(() => {
+    const chips: FilterChipItem[] = [];
+    if (dateFrom || dateTo) {
+      chips.push({
+        key: 'date',
+        label: `Ngày: ${dateFrom || '...'} → ${dateTo || '...'}`,
+        onClear: () => {
+          setDateFrom('');
+          setDateTo('');
+          setDatePreset('all');
+        },
+      });
     }
     if (statusFilter !== 'completed') {
       chips.push({
         key: 'status',
-        label:
-          statusFilter === 'all' ? 'Trạng thái: Tất cả phiếu' : 'Trạng thái: Chỉ Screen-out',
+        label: `Trạng thái: ${statusFilter === 'all' ? 'Tất cả phiếu' : 'Screen-out'}`,
         onClear: () => setStatusFilter('completed'),
       });
     }
@@ -516,61 +313,65 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
         config.locations.find((l) => l.id === locationFilter)?.name || `Điểm #${locationFilter}`;
       chips.push({
         key: 'location',
-        label: `Vị trí: ${locName}`,
+        label: `Điểm: ${locName}`,
         onClear: () => setLocationFilter('all'),
       });
     }
     if (marketFilter !== 'all') {
-      let mLabel = marketFilter;
-      if (marketFilter === 'domestic') mLabel = 'Khách Nội địa';
-      else if (marketFilter === 'international') mLabel = 'Khách Quốc tế';
+      let label = 'Thị trường';
+      if (marketFilter === 'domestic') label = 'Khách Nội địa (S5=1..4)';
+      else if (marketFilter === 'international') label = 'Khách Quốc tế (S5≥5)';
       else if (marketFilter.startsWith('code:')) {
-        const code = Number(marketFilter.replace('code:', ''));
-        mLabel = qOpts('S5', S5_OPTIONS).find((o) => o.code === code)?.label || `Mã ${code}`;
+        const c = Number(marketFilter.replace('code:', ''));
+        const opt = qOpts('S5', S5_OPTIONS).find((o) => o.code === c);
+        label = `S5: ${opt?.label || c}`;
       }
       chips.push({
         key: 'market',
-        label: `Thị trường: ${mLabel}`,
+        label,
         onClear: () => setMarketFilter('all'),
       });
     }
     if (travelModeFilter !== 'all') {
-      const tLabel =
-        qOpts('S7', S7_OPTIONS).find((o) => o.code === travelModeFilter)?.label ||
-        `S7=${travelModeFilter}`;
+      const opt = qOpts('S7', S7_OPTIONS).find((o) => o.code === travelModeFilter);
       chips.push({
-        key: 'travel',
-        label: `Hình thức: ${tLabel}`,
+        key: 's7',
+        label: `S7: ${opt?.label || travelModeFilter}`,
         onClear: () => setTravelModeFilter('all'),
       });
     }
     if (ticketFilter !== 'all') {
-      const tkLabel =
-        qOpts('S9', S9_OPTIONS).find((o) => o.code === ticketFilter)?.label ||
-        `S9=${ticketFilter}`;
+      const opt = qOpts('S9', S9_OPTIONS).find((o) => o.code === ticketFilter);
       chips.push({
-        key: 'ticket',
-        label: `Loại vé: ${tkLabel}`,
+        key: 's9',
+        label: `S9: ${opt?.label || ticketFilter}`,
         onClear: () => setTicketFilter('all'),
       });
     }
     if (fnbUsageFilter !== 'all') {
       chips.push({
         key: 'fnb',
-        label: fnbUsageFilter === 'used' ? 'Đã sử dụng F&B' : 'Chưa sử dụng F&B',
+        label: fnbUsageFilter === 'used' ? 'Đã dùng F&B (A2)' : 'Chưa dùng F&B (A2=7)',
         onClear: () => setFnbUsageFilter('all'),
       });
     }
     if (interviewerFilter !== 'all') {
-      const pvvName =
-        interviewers.find((i) => i.id === interviewerFilter)?.name || interviewerFilter;
+      const pvv = interviewers.find((i) => i.id === interviewerFilter);
       chips.push({
         key: 'pvv',
-        label: `PVV: ${pvvName}`,
+        label: `PVV: ${pvv?.name || interviewerFilter}`,
         onClear: () => setInterviewerFilter('all'),
       });
     }
+    if (chartCrossFilter) {
+      chips.push({
+        key: 'cross',
+        label: `${chartCrossFilter.questionKey}: ${chartCrossFilter.optionLabel}`,
+        onClear: () => setChartCrossFilter(null),
+      });
+    }
     return chips;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     dateFrom,
     dateTo,
@@ -581,22 +382,23 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     ticketFilter,
     fnbUsageFilter,
     interviewerFilter,
+    chartCrossFilter,
     config.locations,
     interviewers,
   ]);
 
-  // ============================================================================
-  // 2. EXPORT OPTIONS FOR FILTERED DATASET
-  // ============================================================================
+  // Cấu hình xuất CSV / Excel đầy đủ
   const exportOptions = useMemo<CsvExportOptions>(() => {
     const questionOptionsMap: Record<string, OptionItem[]> = {};
     Object.entries(config.questions).forEach(([k, v]) => {
       questionOptionsMap[k] = v.options;
     });
+
     const orderedKeys = [...config.questionOrder];
     Object.keys(config.questions).forEach((k) => {
       if (!orderedKeys.includes(k)) orderedKeys.push(k);
     });
+
     const allQuestionsInOrder: CustomQuestionCsvMeta[] = orderedKeys
       .filter((k) => Boolean(config.questions[k]))
       .map((k) => {
@@ -626,7 +428,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   }, [config]);
 
   // ============================================================================
-  // 3. EXECUTIVE KPI & STATISTICAL AGGREGATIONS
+  // 3. STATISTICAL AGGREGATION ENGINE
   // ============================================================================
   const computeSubsetMetrics = (subset: SurveyResponseData[]) => {
     const count = subset.length;
@@ -676,7 +478,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     const b5Top2Pct = b5Count > 0 ? Math.round((b5Top2 / b5Count) * 100) : 0;
 
     const buffetExpensiveCount = subset.filter((r) => r.B4?.buffet === 1).length;
-    const buffetTotalRated = subset.filter((r) => r.B4?.buffet !== null && r.B4?.buffet !== undefined).length;
+    const buffetTotalRated = subset.filter(
+      (r) => r.B4?.buffet !== null && r.B4?.buffet !== undefined
+    ).length;
     const buffetExpensivePct =
       buffetTotalRated > 0 ? Math.round((buffetExpensiveCount / buffetTotalRated) * 100) : 0;
 
@@ -730,53 +534,86 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
       fitCount,
       fitPct,
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseContextResponses, validResponses, config.questions.B5]);
 
-  // Hàm tính phân phối câu hỏi Single-select
-  const computeSingleDistribution = (
+  // Hàm tính phân phối Single-select kèm Drilldown
+  const buildSingleBreakdown = (
     dataset: SurveyResponseData[],
     qKey: string,
-    fallbackOpts: OptionItem[]
-  ) => {
+    qLabel: string,
+    fallbackOpts: OptionItem[],
+    sortByCount = false
+  ): BreakdownItem[] => {
     const opts = qOpts(qKey, fallbackOpts).filter((o) => !(o as { hidden?: boolean }).hidden);
     const totalAnswered = dataset.filter((r) => getSingleAnswer(r, qKey) !== null).length;
-    return opts.map((opt) => {
-      const count = dataset.filter((r) => getSingleAnswer(r, qKey) === opt.code).length;
+    const list: BreakdownItem[] = opts.map((opt, idx) => {
+      const matched = dataset.filter((r) => getSingleAnswer(r, qKey) === opt.code);
+      const count = matched.length;
       const pct = totalAnswered > 0 ? Math.round((count / totalAnswered) * 100) : 0;
+      const isSelected =
+        chartCrossFilter?.questionKey === qKey && chartCrossFilter?.code === opt.code;
       return {
         code: opt.code,
         label: opt.label,
         count,
         pct,
-        totalAnswered,
+        colorHex: CATEGORICAL_HEX[idx % CATEGORICAL_HEX.length],
+        active: isSelected,
+        onClick: () => toggleChartCrossFilter(qKey, qLabel, opt.code, opt.label, false),
+        onInspect:
+          count > 0
+            ? () =>
+                setDrilldown({
+                  title: `${qKey}: ${opt.label}`,
+                  subtitle: `${count} phiếu hợp lệ khớp lựa chọn`,
+                  items: matched,
+                })
+            : undefined,
       };
     });
+    return sortByCount ? [...list].sort((a, b) => b.count - a.count) : list;
   };
 
-  // Hàm tính phân phối câu hỏi Multi-select
-  const computeMultiDistribution = (
+  // Hàm tính phân phối Multi-select kèm Drilldown
+  const buildMultiBreakdown = (
     dataset: SurveyResponseData[],
     qKey: string,
-    fallbackOpts: OptionItem[]
-  ) => {
+    qLabel: string,
+    fallbackOpts: OptionItem[],
+    sortByCount = true
+  ): BreakdownItem[] => {
     const opts = qOpts(qKey, fallbackOpts).filter((o) => !(o as { hidden?: boolean }).hidden);
     const totalRespondents = dataset.filter((r) => getMultiAnswer(r, qKey).length > 0).length;
-    return opts
-      .map((opt) => {
-        const count = dataset.filter((r) => getMultiAnswer(r, qKey).includes(opt.code)).length;
-        const pct = totalRespondents > 0 ? Math.round((count / totalRespondents) * 100) : 0;
-        return {
-          code: opt.code,
-          label: opt.label,
-          count,
-          pct,
-          totalAnswered: totalRespondents,
-        };
-      })
-      .sort((a, b) => b.count - a.count);
+    const list: BreakdownItem[] = opts.map((opt, idx) => {
+      const matched = dataset.filter((r) => getMultiAnswer(r, qKey).includes(opt.code));
+      const count = matched.length;
+      const pct = totalRespondents > 0 ? Math.round((count / totalRespondents) * 100) : 0;
+      const isSelected =
+        chartCrossFilter?.questionKey === qKey && chartCrossFilter?.code === opt.code;
+      return {
+        code: opt.code,
+        label: opt.label,
+        count,
+        pct,
+        colorHex: CATEGORICAL_HEX[idx % CATEGORICAL_HEX.length],
+        active: isSelected,
+        onClick: () => toggleChartCrossFilter(qKey, qLabel, opt.code, opt.label, true),
+        onInspect:
+          count > 0
+            ? () =>
+                setDrilldown({
+                  title: `${qKey}: ${opt.label}`,
+                  subtitle: `${count} phiếu có chọn phương án này`,
+                  items: matched,
+                })
+            : undefined,
+      };
+    });
+    return sortByCount ? [...list].sort((a, b) => b.count - a.count) : list;
   };
 
-  // Hàm tính phân phối Ma trận Likert nhiều dòng (cho B5 và mọi câu Likert Admin thêm)
+  // Hàm tính phân phối Ma trận Likert 5 mức (cho B5 và câu Likert Admin thêm)
   const computeLikertMatrixStats = (dataset: SurveyResponseData[], qKey: string) => {
     const q = config.questions[qKey];
     const scaleLabels = q
@@ -838,7 +675,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     };
   };
 
-  // Danh sách toàn bộ câu hỏi đang bật trong cấu hình
   const allConfiguredQuestions = useMemo(() => {
     const keys = [...config.questionOrder];
     Object.keys(config.questions).forEach((k) => {
@@ -849,9 +685,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
       .filter((q) => Boolean(q) && !q.hidden);
   }, [config]);
 
-  // Danh sách các ý kiến mở (C4_note, A3.1..A3.3, và các ô "Khác (ghi rõ)")
   const openVerbatims = useMemo(() => {
     const items: {
+      response: SurveyResponseData;
       surveyCode: string;
       date: string;
       locationName: string;
@@ -864,37 +700,41 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
         config.locations.find((l) => l.id === r.locationId)?.name || `Điểm #${r.locationId}`;
       if (r.C4_note?.trim()) {
         items.push({
+          response: r,
           surveyCode: r.surveyCode,
           date: r.surveyDate,
           locationName: locName,
-          tag: 'C4. Ghi chú & Đề xuất mở',
+          tag: 'C4. Đề xuất chung',
           text: r.C4_note.trim(),
         });
       }
       if (r.A3_1?.trim()) {
         items.push({
+          response: r,
           surveyCode: r.surveyCode,
           date: r.surveyDate,
           locationName: locName,
-          tag: 'A3.1. Đã ăn ở đâu trước khi lên Bà Nà',
+          tag: 'A3.1. Nơi đã ăn trước',
           text: r.A3_1.trim(),
         });
       }
       if (r.A3_2?.trim()) {
         items.push({
+          response: r,
           surveyCode: r.surveyCode,
           date: r.surveyDate,
           locationName: locName,
-          tag: 'A3.2. Mức giá hợp lý sẵn sàng chi',
+          tag: 'A3.2. Mức giá hợp lý',
           text: r.A3_2.trim(),
         });
       }
       if (r.A3_3?.trim()) {
         items.push({
+          response: r,
           surveyCode: r.surveyCode,
           date: r.surveyDate,
           locationName: locName,
-          tag: 'A3.3. Món ăn / dịch vụ mong muốn',
+          tag: 'A3.3. Món mong muốn',
           text: r.A3_3.trim(),
         });
       }
@@ -902,264 +742,203 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
         const otherTxt = getOtherInputAnswer(r, qk)?.trim();
         if (otherTxt) {
           items.push({
+            response: r,
             surveyCode: r.surveyCode,
             date: r.surveyDate,
             locationName: locName,
-            tag: `${qk} (Khác - ghi rõ)`,
+            tag: `${qk} (Khác)`,
             text: otherTxt,
           });
         }
       });
     });
 
-    return items.slice(0, 40);
+    return items;
   }, [validResponses, config.locations, config.questions]);
 
   // ============================================================================
-  // 4. REUSABLE ANIMATED CHART HELPERS
+  // 4. RENDER LIKERT MATRIX TABLE (Chuẩn IAS Table + Stacked Proportion Bar)
   // ============================================================================
-  const renderAnimatedHorizontalBars = (
-    items: {
-      code: number | string;
-      label: string;
-      count: number;
-      pct: number;
-      isSelected?: boolean;
-      onClick?: () => void;
-    }[],
-    barColorClass = 'bg-[#d12f2f]'
-  ) => {
-    const maxPct = Math.max(...items.map((i) => i.pct), 1);
-    return (
-      <div className="space-y-2">
-        {items.map((item) => {
-          const relativeWidth = item.pct > 0 ? Math.max((item.pct / maxPct) * 100, 4) : 0;
-          return (
-            <div
-              key={item.code}
-              onClick={item.onClick}
-              className={`group rounded-xl p-2 transition ${
-                item.onClick ? 'cursor-pointer hover:bg-slate-50' : ''
-              } ${
-                item.isSelected
-                  ? 'ring-2 ring-[#d12f2f] bg-red-50/40'
-                  : 'border border-transparent'
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2 text-xs mb-1">
-                <span className="font-medium text-slate-800 leading-snug">
-                  <span className="inline-block font-mono text-[11px] font-bold text-slate-400 mr-1.5">
-                    #{item.code}
-                  </span>
-                  {item.label}
-                </span>
-                <span className="font-bold text-slate-900 shrink-0 tabular-nums">
-                  {item.count} phiếu{' '}
-                  <span className="text-slate-500 font-semibold">({item.pct}%)</span>
-                </span>
-              </div>
-              <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${relativeWidth}%` }}
-                  transition={{ type: 'spring', stiffness: 240, damping: 28 }}
-                  className={`h-full rounded-full ${barColorClass}`}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
-  const renderLikertMatrixChart = (
+  const renderLikertTableSection = (
     qKey: string,
     title: string,
-    subtitle?: string,
-    includeRadar = false
+    enableSorting = false
   ) => {
     const { scaleLabels, rows } = computeLikertMatrixStats(validResponses, qKey);
-    const sortedRows = [...rows].sort((a, b) => b.mean - a.mean);
+    const displayRows =
+      enableSorting && b5SortMode === 'code'
+        ? [...rows].sort((a, b) => a.code - b.code)
+        : [...rows].sort((a, b) => b.mean - a.mean);
 
     return (
-      <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 rounded-md bg-red-50 text-[#d12f2f] font-mono text-xs font-bold border border-red-200">
-                {qKey}
-              </span>
-              <h3 className="text-sm font-bold text-slate-900">{title}</h3>
+      <SectionCard
+        key={qKey}
+        code={qKey}
+        title={title}
+        meta={`${rows.length} tiêu chí · n = ${validResponses.length}`}
+        tone="warning"
+        actions={
+          enableSorting ? (
+            <SegmentedToggle
+              value={b5SortMode}
+              onChange={setB5SortMode}
+              options={[
+                { value: 'mean', label: 'Xếp theo Điểm TB' },
+                { value: 'code', label: 'Xếp theo Mã' },
+              ]}
+            />
+          ) : undefined
+        }
+        bodyClassName="p-0"
+        footer={
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+              {scaleLabels.map((lbl, idx) => (
+                <span key={idx} className="inline-flex items-center gap-1.5">
+                  <span
+                    className="h-2 w-2 rounded-full shrink-0"
+                    style={{ backgroundColor: LIKERT_TONE_HEX[idx] }}
+                  />
+                  <span className="font-medium text-slate-700">{idx + 1}:</span>
+                  <span>{lbl}</span>
+                </span>
+              ))}
             </div>
-            {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
+            <span className="text-xs text-slate-400 tabular-nums">
+              Thang điểm 1.00 – 5.00
+            </span>
           </div>
-
-          {/* Chú giải 5 mức độ Likert */}
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-            {scaleLabels.map((lbl, idx) => (
-              <span
-                key={idx}
-                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-slate-700 font-medium"
-              >
-                <span className={`w-2.5 h-2.5 rounded-xs ${LIKERT_SCORE_COLORS[idx]}`} />
-                <strong>{idx + 1}:</strong> {lbl}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div
-          className={
-            includeRadar && rows.length >= 3
-              ? 'grid grid-cols-1 lg:grid-cols-12 gap-5 items-center'
-              : ''
-          }
-        >
-          {includeRadar && rows.length >= 3 && (
-            <div className="lg:col-span-4 bg-slate-50/70 rounded-2xl p-4 border border-slate-200/80 flex items-center justify-center">
-              <ServqualRadarChart rows={rows} />
-            </div>
-          )}
-
-          <div className={includeRadar && rows.length >= 3 ? 'lg:col-span-8 space-y-3' : 'space-y-3'}>
-            {sortedRows.map((row) => (
-              <div
-                key={row.code}
-                className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-2"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-xs font-semibold text-slate-900 leading-snug max-w-2xl">
-                    <span className="inline-block px-1.5 py-0.5 rounded bg-slate-900 text-white font-mono text-[10px] font-bold mr-2">
+        }
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-slate-200/80 bg-slate-50/70 text-slate-500 font-medium">
+                <th className="py-2.5 px-4 w-16">Mã</th>
+                <th className="py-2.5 px-3 min-w-[220px]">Tiêu chí đánh giá</th>
+                <th className="py-2.5 px-3 w-64">Phân bổ tỷ trọng 5 mức (1 → 5)</th>
+                <th className="py-2.5 px-2 text-right w-14 tabular-nums">Mức 1-2</th>
+                <th className="py-2.5 px-2 text-right w-14 tabular-nums">Mức 3</th>
+                <th className="py-2.5 px-3 text-right w-20 tabular-nums">Mức 4+5</th>
+                <th className="py-2.5 px-4 text-right w-24 tabular-nums">Điểm TB</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {displayRows.map((row) => {
+                const low2Pct = row.pcts[0] + row.pcts[1];
+                return (
+                  <tr key={row.code} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-2.5 px-4 font-mono text-[11px] font-medium text-slate-500 whitespace-nowrap">
                       {row.displayCode}
-                    </span>
-                    {row.label}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
-                      Mức 4+5: {row.top2Pct}%
-                    </span>
-                    <span className="px-2.5 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-black tabular-nums">
-                      TB: {row.mean.toFixed(2)} / 5.0
-                    </span>
-                  </div>
-                </div>
-
-                {/* 100% Stacked Animated Bar */}
-                <div className="h-5 w-full bg-slate-200 rounded-lg overflow-hidden flex">
-                  {row.pcts.map((pct, sIdx) =>
-                    pct > 0 ? (
-                      <motion.div
-                        key={sIdx}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${pct}%` }}
-                        transition={{ type: 'spring', stiffness: 220, damping: 26 }}
-                        className={`h-full ${LIKERT_SCORE_COLORS[sIdx]} flex items-center justify-center text-[10px] font-bold text-white overflow-hidden`}
-                        title={`Mức ${sIdx + 1} (${scaleLabels[sIdx]}): ${row.counts[sIdx]} phiếu (${pct}%)`}
-                      >
-                        {pct >= 9 ? `${pct}%` : ''}
-                      </motion.div>
-                    ) : null
-                  )}
-                </div>
-
-                {/* Chi tiết số phiếu từng mức 1..5 */}
-                <div className="grid grid-cols-5 gap-1 text-[10px] text-slate-500 pt-0.5">
-                  {[0, 1, 2, 3, 4].map((sIdx) => (
-                    <div key={sIdx} className="truncate">
-                      <span className={`font-bold ${LIKERT_TEXT_COLORS[sIdx]}`}>
-                        Mức {sIdx + 1}:
-                      </span>{' '}
-                      {row.counts[sIdx]} ({row.pcts[sIdx]}%)
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+                    </td>
+                    <td className="py-2.5 px-3 font-medium text-slate-800">
+                      {row.label}
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                        {row.pcts.map((pct, sIdx) =>
+                          pct > 0 ? (
+                            <motion.div
+                              key={sIdx}
+                              initial={{ width: 0 }}
+                              animate={{ width: `${pct}%` }}
+                              transition={{ duration: 0.25, ease: 'easeOut' }}
+                              style={{ backgroundColor: LIKERT_TONE_HEX[sIdx] }}
+                              className="h-full border-r border-white last:border-r-0"
+                              title={`Mức ${sIdx + 1} (${scaleLabels[sIdx]}): ${row.counts[sIdx]} phiếu (${pct}%)`}
+                            />
+                          ) : null
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-2 text-right tabular-nums text-rose-600">
+                      {low2Pct}%
+                    </td>
+                    <td className="py-2.5 px-2 text-right tabular-nums text-slate-500">
+                      {row.pcts[2]}%
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-semibold tabular-nums text-emerald-700">
+                      {row.top2Pct}%
+                    </td>
+                    <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-slate-900 font-semibold tabular-nums">
+                        {row.mean.toFixed(2)}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-      </div>
+      </SectionCard>
     );
   };
 
+  const spendDelta = kpiMetrics.avgActualSpend - kpiMetrics.avgPlannedBudget;
+  const hasPilotSamples = responses.some((r) => r.id.startsWith('PILOT_SAMPLE_'));
+
   return (
-    <div className="space-y-4 pb-14">
+    <div className="space-y-4 pb-12">
       {/* ==========================================================================
-          STICKY MULTI-DIMENSIONAL INTERACTIVE FILTER BAR
+          ROW 1: CLEAN PAGE HEADER (Chuẩn DESIGN.md §6b D1 & PageHeader.tsx)
          ========================================================================== */}
-      <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-slate-200 shadow-xs space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-[#d12f2f]">
-              <Filter className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="text-xs sm:text-sm font-bold text-slate-900">
-                Phân Hệ Báo Cáo Đa Chiều &amp; Bộ Lọc Tương Tác Thời Gian Thực
-              </h2>
-              <p className="text-[11px] text-slate-500">
-                Chọn bộ lọc bên dưới hoặc bấm trực tiếp vào biểu đồ (Donut, Cột, Thanh) để lọc chéo
-                dữ liệu
-              </p>
-            </div>
-          </div>
+      <PageHeader
+        title="Báo cáo khảo sát F&B"
+        meta={
+          <>
+            <span className="font-semibold text-slate-700">{kpiMetrics.completedCount}</span>{' '}
+            phiếu hợp lệ / {config.dataFormat.totalQuotaTarget} chỉ tiêu ·{' '}
+            <span>{kpiMetrics.screenoutCount} dừng sàng lọc</span> ·{' '}
+            <span>{config.locations.length} điểm khảo sát</span>
+          </>
+        }
+        actions={
+          <>
+            <SegmentedToggle
+              value={datePreset}
+              onChange={applyQuickDatePreset}
+              options={[
+                { value: 'all', label: 'Tất cả' },
+                { value: 'today', label: 'Hôm nay' },
+                { value: '7days', label: '7 ngày' },
+              ]}
+            />
 
-          <div className="flex flex-wrap items-center gap-1.5">
-            {/* Nút chọn nhanh khoảng ngày */}
-            <div className="inline-flex items-center rounded-xl bg-slate-100 p-0.5 text-[11px] font-semibold">
-              <button
-                type="button"
-                onClick={() => applyQuickDatePreset('all')}
-                className={`px-2 py-1 rounded-lg cursor-pointer transition ${
-                  !dateFrom && !dateTo ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
-                }`}
-              >
-                Tất cả ngày
-              </button>
-              <button
-                type="button"
-                onClick={() => applyQuickDatePreset('today')}
-                className="px-2 py-1 rounded-lg text-slate-600 hover:text-slate-900 cursor-pointer transition"
-              >
-                Hôm nay
-              </button>
-              <button
-                type="button"
-                onClick={() => applyQuickDatePreset('7days')}
-                className="px-2 py-1 rounded-lg text-slate-600 hover:text-slate-900 cursor-pointer transition"
-              >
-                7 ngày
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowFilterPanel((v) => !v)}
+              className={`h-8 px-3 rounded-lg border text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                showFilterPanel || activeFilterChips.length > 0
+                  ? 'border-slate-300 bg-slate-900 text-white'
+                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              <span>Bộ lọc</span>
+              {activeFilterChips.length > 0 && (
+                <span className="rounded bg-white/20 px-1.5 py-0.2 text-[11px] font-semibold tabular-nums">
+                  {activeFilterChips.length}
+                </span>
+              )}
+            </button>
 
-            {isSuperadmin && onSeedPilotSamples && (
+            {isSuperadmin && onSeedPilotSamples && !hasPilotSamples && (
               <button
                 type="button"
                 onClick={onSeedPilotSamples}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold cursor-pointer transition"
+                className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium cursor-pointer transition-colors"
               >
-                + Tạo mẫu thử (30 phiếu)
+                + Nạp 30 mẫu thử
               </button>
             )}
-            {isSuperadmin &&
-              onClearPilotSamples &&
-              responses.some((r) => r.id.startsWith('PILOT_SAMPLE_')) && (
-                <button
-                  type="button"
-                  onClick={onClearPilotSamples}
-                  className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-semibold cursor-pointer transition"
-                >
-                  Xóa mẫu thử
-                </button>
-              )}
-            {activeFilterChips.length > 0 && (
+            {isSuperadmin && onClearPilotSamples && hasPilotSamples && (
               <button
                 type="button"
-                onClick={resetAllFilters}
-                className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold inline-flex items-center gap-1 cursor-pointer transition"
+                onClick={onClearPilotSamples}
+                className="h-8 px-3 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-medium cursor-pointer transition-colors"
               >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Đặt lại bộ lọc ({activeFilterChips.length})
+                Xóa mẫu thử
               </button>
             )}
 
@@ -1168,1397 +947,1759 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                 <button
                   type="button"
                   disabled={filteredResponses.length === 0}
-                  onClick={() => exportResponsesToExcel(filteredResponses, exportOptions)}
-                  className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer transition"
+                  onClick={() => exportResponsesToCsv(filteredResponses, exportOptions)}
+                  className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-700 text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors"
                 >
-                  <FileSpreadsheet className="w-3.5 h-3.5" />
-                  Tải Excel Có Cấu Trúc ({filteredResponses.length})
+                  <Download className="h-3.5 w-3.5 text-slate-500" />
+                  <span>Xuất CSV ({filteredResponses.length})</span>
                 </button>
                 <button
                   type="button"
                   disabled={filteredResponses.length === 0}
-                  onClick={() => exportResponsesToCsv(filteredResponses, exportOptions)}
-                  className="px-3 py-1.5 rounded-xl bg-[#d12f2f] hover:bg-[#b82626] disabled:opacity-50 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer transition"
+                  onClick={() => exportResponsesToExcel(filteredResponses, exportOptions)}
+                  className="h-8 px-3 rounded-lg bg-[#d12f2f] hover:bg-[#b82626] disabled:opacity-50 text-white text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  Tải CSV ({filteredResponses.length})
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                  <span>Xuất Excel ({filteredResponses.length})</span>
                 </button>
               </>
             )}
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        {/* 8 Điều kiện lọc đa chiều */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-              Từ ngày
-            </label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800"
-            />
-          </div>
+      {/* ==========================================================================
+          ROW 2: COMPACT INLINE FILTER BAR + ACTIVE FILTER CHIPS
+         ========================================================================== */}
+      {showFilterPanel && (
+        <div className="rounded-xl border border-slate-200/80 bg-white p-3 space-y-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Từ ngày</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => {
+                  setDateFrom(e.target.value);
+                  setDatePreset('all');
+                }}
+                className="h-8 w-full px-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-slate-400 tabular-nums"
+              />
+            </div>
 
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-              Đến ngày
-            </label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-full px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800"
-            />
-          </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Đến ngày</label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => {
+                  setDateTo(e.target.value);
+                  setDatePreset('all');
+                }}
+                className="h-8 w-full px-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-slate-400 tabular-nums"
+              />
+            </div>
 
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-              Điểm khảo sát
-            </label>
-            <select
-              value={locationFilter}
-              onChange={(e) =>
-                setLocationFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
-              }
-              className="w-full px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800"
-            >
-              <option value="all">Tất cả điểm ({config.locations.length})</option>
-              {config.locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Điểm khảo sát
+              </label>
+              <select
+                value={locationFilter}
+                onChange={(e) =>
+                  setLocationFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
+                }
+                className="h-8 w-full px-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-slate-400"
+              >
+                <option value="all">Tất cả điểm ({config.locations.length})</option>
+                {config.locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-              Thị trường (S5)
-            </label>
-            <select
-              value={marketFilter}
-              onChange={(e) => setMarketFilter(e.target.value)}
-              className="w-full px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800"
-            >
-              <option value="all">Tất cả thị trường</option>
-              <option value="domestic">Khách Nội địa (S5=1..4)</option>
-              <option value="international">Khách Quốc tế (S5≥5)</option>
-              <optgroup label="Chi tiết từng Quốc tịch / Vùng">
-                {qOpts('S5', S5_OPTIONS).map((o) => (
-                  <option key={o.code} value={`code:${o.code}`}>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Thị trường (S5)
+              </label>
+              <select
+                value={marketFilter}
+                onChange={(e) => setMarketFilter(e.target.value)}
+                className="h-8 w-full px-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-slate-400"
+              >
+                <option value="all">Tất cả thị trường</option>
+                <option value="domestic">Khách Nội địa (S5=1..4)</option>
+                <option value="international">Khách Quốc tế (S5≥5)</option>
+                <optgroup label="Theo quốc tịch / vùng">
+                  {qOpts('S5', S5_OPTIONS).map((o) => (
+                    <option key={o.code} value={`code:${o.code}`}>
+                      {o.code}. {o.label}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Hình thức đi (S7)
+              </label>
+              <select
+                value={travelModeFilter}
+                onChange={(e) =>
+                  setTravelModeFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
+                }
+                className="h-8 w-full px-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-slate-400"
+              >
+                <option value="all">Tất cả (FIT &amp; Tour)</option>
+                {qOpts('S7', S7_OPTIONS).map((o) => (
+                  <option key={o.code} value={o.code}>
                     {o.code}. {o.label}
                   </option>
                 ))}
-              </optgroup>
-            </select>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Gói vé (S9)
+              </label>
+              <select
+                value={ticketFilter}
+                onChange={(e) =>
+                  setTicketFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
+                }
+                className="h-8 w-full px-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-slate-400"
+              >
+                <option value="all">Tất cả gói vé</option>
+                {qOpts('S9', S9_OPTIONS).map((o) => (
+                  <option key={o.code} value={o.code}>
+                    {o.code}. {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Sử dụng F&amp;B (A2)
+              </label>
+              <select
+                value={fnbUsageFilter}
+                onChange={(e) =>
+                  setFnbUsageFilter(e.target.value as 'all' | 'used' | 'not_used')
+                }
+                className="h-8 w-full px-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-slate-400"
+              >
+                <option value="all">Tất cả đáp viên</option>
+                <option value="used">Đã dùng F&amp;B (A2=1..6)</option>
+                <option value="not_used">Chưa dùng F&amp;B (A2=7)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Phỏng vấn viên
+              </label>
+              <select
+                value={interviewerFilter}
+                onChange={(e) => setInterviewerFilter(e.target.value)}
+                className="h-8 w-full px-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-slate-400"
+              >
+                <option value="all">Tất cả PVV ({interviewers.length})</option>
+                {interviewers.map((pvv) => (
+                  <option key={pvv.id} value={pvv.id}>
+                    {pvv.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-              Hình thức đi (S7)
-            </label>
-            <select
-              value={travelModeFilter}
-              onChange={(e) =>
-                setTravelModeFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
-              }
-              className="w-full px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800"
-            >
-              <option value="all">Tất cả (FIT &amp; Tour)</option>
-              {qOpts('S7', S7_OPTIONS).map((o) => (
-                <option key={o.code} value={o.code}>
-                  {o.code}. {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-              Gói vé (S9)
-            </label>
-            <select
-              value={ticketFilter}
-              onChange={(e) =>
-                setTicketFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
-              }
-              className="w-full px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800"
-            >
-              <option value="all">Tất cả gói vé</option>
-              {qOpts('S9', S9_OPTIONS).map((o) => (
-                <option key={o.code} value={o.code}>
-                  {o.code}. {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-              Hành vi F&amp;B (A2)
-            </label>
-            <select
-              value={fnbUsageFilter}
-              onChange={(e) =>
-                setFnbUsageFilter(e.target.value as 'all' | 'used' | 'not_used')
-              }
-              className="w-full px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800"
-            >
-              <option value="all">Tất cả đáp viên</option>
-              <option value="used">Đã sử dụng F&amp;B (A2=1..6)</option>
-              <option value="not_used">Chưa dùng F&amp;B (A2=7)</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-              Phỏng vấn viên
-            </label>
-            <select
-              value={interviewerFilter}
-              onChange={(e) => setInterviewerFilter(e.target.value)}
-              className="w-full px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800"
-            >
-              <option value="all">Tất cả PVV ({interviewers.length})</option>
-              {interviewers.map((pvv) => (
-                <option key={pvv.id} value={pvv.id}>
-                  {pvv.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Active Filter Chips */}
-        <AnimatePresence>
           {activeFilterChips.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="flex flex-wrap items-center gap-1.5 pt-1"
-            >
-              <span className="text-[11px] font-semibold text-slate-500 mr-1">
-                Đang lọc ({validResponses.length} phiếu hợp lệ):
-              </span>
-              {activeFilterChips.map((chip) => (
-                <motion.span
-                  key={chip.key}
-                  initial={{ scale: 0.85, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.85, opacity: 0 }}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-50 text-[#d12f2f] border border-red-200 text-[11px] font-bold"
-                >
-                  {chip.label}
-                  <button
-                    type="button"
-                    onClick={chip.onClear}
-                    className="hover:bg-red-200/60 rounded-full px-1 cursor-pointer"
-                  >
-                    ×
-                  </button>
-                </motion.span>
-              ))}
-            </motion.div>
+            <div className="pt-2 border-t border-slate-100">
+              <ActiveFilterChips
+                chips={activeFilterChips}
+                onClearAll={resetAllFilters}
+                summaryText={`Đang lọc (${validResponses.length} phiếu hợp lệ):`}
+              />
+            </div>
           )}
-        </AnimatePresence>
-      </div>
-
-      {/* ==========================================================================
-          EXECUTIVE KPI SUMMARY CARDS (6 REACTIVE CARDS)
-         ========================================================================== */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-        <motion.div
-          layout
-          className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-2xs flex flex-col justify-between"
-        >
-          <div className="flex items-center justify-between text-slate-400 text-[11px] font-bold">
-            <span>MẪU HỢP LỆ / QUOTA</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="my-1.5">
-            <span className="text-2xl font-black text-slate-900 tabular-nums">
-              {kpiMetrics.completedCount}
-            </span>
-            <span className="text-xs font-semibold text-slate-400">
-              {' '}
-              / {config.dataFormat.totalQuotaTarget}
-            </span>
-          </div>
-          <div className="text-[11px] text-slate-500">
-            Tiếp cận: <strong>{kpiMetrics.totalApproached}</strong> ({kpiMetrics.completionRate}%
-            hợp lệ)
-          </div>
-        </motion.div>
-
-        <motion.div
-          layout
-          onClick={() =>
-            setFnbUsageFilter((prev) => (prev === 'used' ? 'all' : 'used'))
-          }
-          className={`bg-white rounded-2xl p-3.5 border shadow-2xs flex flex-col justify-between cursor-pointer transition ${
-            fnbUsageFilter === 'used'
-              ? 'border-[#d12f2f] ring-2 ring-[#d12f2f]/20'
-              : 'border-slate-200 hover:border-slate-300'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-400 text-[11px] font-bold">
-            <span>THÂM NHẬP F&amp;B (A2)</span>
-            <Utensils className="w-4 h-4 text-[#d12f2f]" />
-          </div>
-          <div className="my-1.5">
-            <span className="text-2xl font-black text-[#d12f2f] tabular-nums">
-              {kpiMetrics.fnbPenetrationRate}%
-            </span>
-          </div>
-          <div className="text-[11px] text-slate-500">
-            Đã dùng: <strong>{kpiMetrics.usedFnBCount}</strong> • Chưa dùng:{' '}
-            <strong>{kpiMetrics.notUsedFnBCount}</strong>
-          </div>
-        </motion.div>
-
-        <motion.div
-          layout
-          className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-2xs flex flex-col justify-between"
-        >
-          <div className="flex items-center justify-between text-slate-400 text-[11px] font-bold">
-            <span>NGÂN SÁCH DỰ KIẾN (A1)</span>
-            <Wallet className="w-4 h-4 text-sky-600" />
-          </div>
-          <div className="my-1.5">
-            <span className="text-xl font-black text-slate-900 tabular-nums">
-              {kpiMetrics.avgPlannedBudget > 0
-                ? `${kpiMetrics.avgPlannedBudget.toLocaleString('vi-VN')}đ`
-                : '—'}
-            </span>
-          </div>
-          <div className="text-[11px] text-slate-500">Bình quân ước tính / 1 khách</div>
-        </motion.div>
-
-        <motion.div
-          layout
-          className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-2xs flex flex-col justify-between"
-        >
-          <div className="flex items-center justify-between text-slate-400 text-[11px] font-bold">
-            <span>CHI THỰC TẾ BÌNH QUÂN (A4)</span>
-            <TrendingUp className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="my-1.5">
-            <span className="text-xl font-black text-emerald-700 tabular-nums">
-              {kpiMetrics.avgActualSpend > 0
-                ? `${kpiMetrics.avgActualSpend.toLocaleString('vi-VN')}đ`
-                : '—'}
-            </span>
-          </div>
-          <div className="text-[11px] text-slate-500">
-            {kpiMetrics.avgPlannedBudget > 0 && kpiMetrics.avgActualSpend > 0 ? (
-              <span>
-                Chênh lệch A4 vs A1:{' '}
-                <strong
-                  className={
-                    kpiMetrics.avgActualSpend >= kpiMetrics.avgPlannedBudget
-                      ? 'text-emerald-700'
-                      : 'text-amber-600'
-                  }
-                >
-                  {kpiMetrics.avgActualSpend >= kpiMetrics.avgPlannedBudget ? '+' : ''}
-                  {Math.round(
-                    ((kpiMetrics.avgActualSpend - kpiMetrics.avgPlannedBudget) /
-                      kpiMetrics.avgPlannedBudget) *
-                      100
-                  )}
-                  %
-                </strong>
-              </span>
-            ) : (
-              'Tính trên nhóm đã dùng F&B'
-            )}
-          </div>
-        </motion.div>
-
-        <motion.div
-          layout
-          className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-2xs flex flex-col justify-between"
-        >
-          <div className="flex items-center justify-between text-slate-400 text-[11px] font-bold">
-            <span>ĐIỂM SERVQUAL (B5)</span>
-            <Star className="w-4 h-4 text-amber-500" />
-          </div>
-          <div className="my-1.5">
-            <span className="text-2xl font-black text-amber-600 tabular-nums">
-              {kpiMetrics.b5OverallMean > 0 ? kpiMetrics.b5OverallMean.toFixed(2) : '—'}
-            </span>
-            <span className="text-xs font-semibold text-slate-400"> / 5.0</span>
-          </div>
-          <div className="text-[11px] text-slate-500">
-            Tỷ lệ Quan trọng (Mức 4+5): <strong>{kpiMetrics.b5Top2BoxPct}%</strong>
-          </div>
-        </motion.div>
-
-        <motion.div
-          layout
-          onClick={() =>
-            setMarketFilter((prev) =>
-              prev === 'international' ? 'all' : 'international'
-            )
-          }
-          className={`bg-white rounded-2xl p-3.5 border shadow-2xs flex flex-col justify-between cursor-pointer transition ${
-            marketFilter === 'international'
-              ? 'border-[#d12f2f] ring-2 ring-[#d12f2f]/20'
-              : 'border-slate-200 hover:border-slate-300'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-400 text-[11px] font-bold">
-            <span>QUỐC TẾ &amp; TỰ TÚC (FIT)</span>
-            <Users className="w-4 h-4 text-indigo-600" />
-          </div>
-          <div className="my-1.5">
-            <span className="text-2xl font-black text-indigo-700 tabular-nums">
-              {kpiMetrics.intlPct}%
-            </span>
-            <span className="text-xs font-semibold text-slate-400"> Quốc tế</span>
-          </div>
-          <div className="text-[11px] text-slate-500">
-            Khách đi tự túc (FIT): <strong>{kpiMetrics.fitPct}%</strong>
-          </div>
-        </motion.div>
-      </div>
-
-      {/* ==========================================================================
-          SUB-NAVIGATION TABS FOR REPORT SECTIONS
-         ========================================================================== */}
-      <div className="bg-white rounded-2xl p-1.5 border border-slate-200 flex flex-wrap items-center gap-1">
-        {[
-          { id: 'all', label: 'Toàn cảnh Báo cáo (All-in-One)', icon: Layers },
-          { id: 'overview', label: '1. Quota, PVV & Nhân khẩu học (Phần S)', icon: MapPin },
-          { id: 'spending', label: '2. Chi tiêu, Ma trận A5 & Rào cản (Phần A)', icon: BarChart3 },
-          {
-            id: 'preferences',
-            label: '3. Khẩu vị, Giá (B4) & Radar SERVQUAL (B5)',
-            icon: PieChart,
-          },
-          {
-            id: 'expectations',
-            label: '4. Kỳ vọng & Đề xuất (Phần C)',
-            icon: Sparkles,
-          },
-          {
-            id: 'crosstab',
-            label: '5. Ma trận Phân tích Chéo (Cross-tab)',
-            icon: Table2,
-          },
-          {
-            id: 'explorer',
-            label: `6. Khám phá 100% Câu hỏi (${allConfiguredQuestions.length})`,
-            icon: Compass,
-          },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const active = activeSubTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveSubTab(tab.id as DashboardViewTab)}
-              className={`px-3 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer ${
-                active
-                  ? 'bg-slate-900 text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {validResponses.length === 0 ? (
-        <div className="bg-white rounded-2xl p-12 border border-slate-200 text-center space-y-2">
-          <AlertCircle className="w-8 h-8 text-slate-400 mx-auto" />
-          <div className="text-sm font-bold text-slate-800">
-            Không có phiếu khảo sát nào khớp với điều kiện lọc hiện tại
-          </div>
-          <p className="text-xs text-slate-500">
-            Hãy nới lỏng bộ lọc hoặc nhấn nút tạo dữ liệu mẫu Pilot để kiểm thử trực quan hóa biểu
-            đồ.
-          </p>
-          <div className="flex flex-wrap items-center gap-2 justify-center pt-1">
-            {activeFilterChips.length > 0 && (
-              <button
-                type="button"
-                onClick={resetAllFilters}
-                className="px-4 py-2 rounded-xl bg-[#d12f2f] text-white text-xs font-bold cursor-pointer"
-              >
-                Đặt lại toàn bộ bộ lọc
-              </button>
-            )}
-            {isSuperadmin && onSeedPilotSamples && (
-              <button
-                type="button"
-                onClick={onSeedPilotSamples}
-                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer"
-              >
-                + Tạo 30 phiếu mẫu Pilot để trải nghiệm Dashboard &amp; Filter
-              </button>
-            )}
-          </div>
         </div>
-      ) : (
-        <div className="space-y-5">
-          {/* ======================================================================
-              SECTION 1: QUOTA PROGRESS, DONUT SEGMENTATION & DEMOGRAPHICS (PHẦN S)
-             ====================================================================== */}
-          {(activeSubTab === 'all' || activeSubTab === 'overview') && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-4"
+      )}
+
+      {!showFilterPanel && activeFilterChips.length > 0 && (
+        <div className="rounded-xl border border-slate-200/80 bg-white px-3.5 py-2">
+          <ActiveFilterChips
+            chips={activeFilterChips}
+            onClearAll={resetAllFilters}
+            summaryText={`Đang lọc (${validResponses.length} phiếu hợp lệ):`}
+          />
+        </div>
+      )}
+
+      {/* ==========================================================================
+          ROW 3: 6 STAT CARDS (Chuẩn StatCard.tsx — Không icon trang trí)
+         ========================================================================== */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <StatCard
+          label="Mẫu hợp lệ"
+          tone="ocean"
+          value={kpiMetrics.completedCount.toLocaleString('vi-VN')}
+          subValue={`/ ${config.dataFormat.totalQuotaTarget}`}
+          note={`Tiếp cận ${kpiMetrics.totalApproached} · đạt ${kpiMetrics.completionRate}%`}
+          onClick={() =>
+            setDrilldown({
+              title: 'Danh sách phiếu khảo sát hợp lệ',
+              subtitle: `${validResponses.length} phiếu hoàn thành theo bộ lọc hiện tại`,
+              items: validResponses,
+            })
+          }
+        />
+
+        <StatCard
+          label="Tỷ lệ dùng F&B (A2)"
+          tone="success"
+          value={`${kpiMetrics.fnbPenetrationRate}%`}
+          active={fnbUsageFilter === 'used'}
+          onClick={() => setFnbUsageFilter((prev) => (prev === 'used' ? 'all' : 'used'))}
+          note={`${kpiMetrics.usedFnBCount} dùng · ${kpiMetrics.notUsedFnBCount} chưa dùng`}
+        />
+
+        <StatCard
+          label="Khách Quốc tế (S5)"
+          tone="iris"
+          value={`${kpiMetrics.intlPct}%`}
+          active={marketFilter === 'international'}
+          onClick={() =>
+            setMarketFilter((prev) => (prev === 'international' ? 'all' : 'international'))
+          }
+          note={`${kpiMetrics.intlCount} Quốc tế · ${
+            kpiMetrics.completedCount - kpiMetrics.intlCount
+          } Nội địa`}
+        />
+
+        <StatCard
+          label="Ngân sách dự kiến (A1)"
+          tone="info"
+          value={
+            kpiMetrics.avgPlannedBudget > 0 ? `~${kpiMetrics.avgPlannedBudget}k` : '—'
+          }
+          subValue="đ/người"
+          active={travelModeFilter === 1}
+          onClick={() => setTravelModeFilter((prev) => (prev === 1 ? 'all' : 1))}
+          note={`Tự túc (FIT): ${kpiMetrics.fitPct}% (${kpiMetrics.fitCount} phiếu)`}
+        />
+
+        <StatCard
+          label="Chi tiêu thực tế (A4)"
+          tone="brand"
+          value={kpiMetrics.avgActualSpend > 0 ? `~${kpiMetrics.avgActualSpend}k` : '—'}
+          subValue="đ/người"
+          note={
+            kpiMetrics.avgPlannedBudget > 0 && kpiMetrics.avgActualSpend > 0
+              ? `Chênh lệch so với A1: ${spendDelta >= 0 ? '+' : ''}${spendDelta}k`
+              : `Tính trên ${kpiMetrics.usedFnBCount} khách đã dùng F&B`
+          }
+        />
+
+        <StatCard
+          label="Điểm SERVQUAL (B5)"
+          tone="warning"
+          value={kpiMetrics.b5OverallMean > 0 ? kpiMetrics.b5OverallMean.toFixed(2) : '—'}
+          subValue="/ 5.00"
+          note={`Quan trọng (mức 4+5): ${kpiMetrics.b5Top2BoxPct}%`}
+        />
+      </div>
+
+      {/* ==========================================================================
+          ROW 4: SEGMENTED MODULE TABS (Chuẩn IAS Segmented Navigation)
+         ========================================================================== */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
+        <div className="inline-flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1 border border-slate-200/80">
+          {(
+            [
+              { id: 'overview', label: '1. Tổng quan & Phân khúc (Phần S)' },
+              { id: 'spending', label: '2. Hành vi & Chi tiêu (Phần A)' },
+              { id: 'preferences', label: '3. Thị hiếu & Khẩu vị (Phần B)' },
+              { id: 'expectations', label: '4. SERVQUAL & Kỳ vọng (B5 & Phần C)' },
+              {
+                id: 'crosstab',
+                label: `5. Phân tách đa chiều & Câu hỏi (${allConfiguredQuestions.length})`,
+              },
+            ] as { id: ReportSectionTab; label: string }[]
+          ).map((tab) => {
+            const active = activeSubTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveSubTab(tab.id)}
+                className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
+                  active
+                    ? 'bg-white text-slate-950 font-semibold shadow-2xs'
+                    : 'text-slate-600 font-medium hover:text-slate-900'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {chartCrossFilter && (
+          <button
+            type="button"
+            onClick={() => setChartCrossFilter(null)}
+            className="text-xs font-medium text-[#d12f2f] hover:underline inline-flex items-center gap-1 cursor-pointer"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Bỏ lọc biểu đồ ({chartCrossFilter.questionKey}: {chartCrossFilter.optionLabel})
+          </button>
+        )}
+      </div>
+
+      {/* ==========================================================================
+          TAB 1: TỔNG QUAN & PHÂN KHÚC KHÁCH HÀNG (PHẦN S)
+         ========================================================================== */}
+      {activeSubTab === 'overview' && (
+        <div className="space-y-4">
+          {/* Luồng chuyển đổi mẫu khảo sát (Funnel) & S2/S1 */}
+          <SectionCard
+            title="Phễu chuyển đổi mẫu khảo sát & hành vi tiêu dùng F&B"
+            meta={`Tiếp cận ${kpiMetrics.totalApproached} lượt`}
+            tone="ocean"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {[
+                {
+                  step: '01',
+                  label: 'Tổng lượt tiếp cận',
+                  count: kpiMetrics.totalApproached,
+                  pct: 100,
+                  sub: '100% mẫu ghi nhận',
+                  tone: 'neutral' as const,
+                  onClick: () =>
+                    setDrilldown({
+                      title: 'Tổng lượt tiếp cận',
+                      subtitle: `${baseContextResponses.length} bản ghi`,
+                      items: baseContextResponses,
+                    }),
+                },
+                {
+                  step: '02',
+                  label: 'Mẫu hợp lệ (Qua S2)',
+                  count: kpiMetrics.completedCount,
+                  pct: kpiMetrics.completionRate,
+                  sub: `${kpiMetrics.screenoutCount} dừng sàng lọc (S2=3)`,
+                  tone: 'ocean' as const,
+                  onClick: () =>
+                    setDrilldown({
+                      title: 'Mẫu hợp lệ (Qua sàng lọc S2)',
+                      subtitle: `${validResponses.length} phiếu hoàn thành`,
+                      items: validResponses,
+                    }),
+                },
+                {
+                  step: '03',
+                  label: 'Đã sử dụng F&B (A2=1..6)',
+                  count: kpiMetrics.usedFnBCount,
+                  pct: kpiMetrics.fnbPenetrationRate,
+                  sub: 'Trả lời chi tiết A4 → A8',
+                  tone: 'success' as const,
+                  onClick: () => setFnbUsageFilter((p) => (p === 'used' ? 'all' : 'used')),
+                },
+                {
+                  step: '04',
+                  label: 'Chưa dùng F&B (A2=7)',
+                  count: kpiMetrics.notUsedFnBCount,
+                  pct:
+                    kpiMetrics.completedCount > 0
+                      ? 100 - kpiMetrics.fnbPenetrationRate
+                      : 0,
+                  sub: 'Phân tích rào cản tại A3',
+                  tone: 'warning' as const,
+                  onClick: () =>
+                    setFnbUsageFilter((p) => (p === 'not_used' ? 'all' : 'not_used')),
+                },
+              ].map((st) => (
+                <div
+                  key={st.step}
+                  onClick={st.onClick}
+                  className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-3 hover:border-slate-300 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-mono text-[11px] text-slate-400">{st.step}</span>
+                    <span className="font-semibold tabular-nums text-slate-600">{st.pct}%</span>
+                  </div>
+                  <div className="mt-1 text-xs font-medium text-slate-600">{st.label}</div>
+                  <div className="mt-0.5 text-xl font-semibold tracking-tight tabular-nums text-slate-900">
+                    {st.count.toLocaleString('vi-VN')}{' '}
+                    <span className="text-xs font-normal text-slate-400">phiếu</span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200/70 overflow-hidden">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${st.pct}%` }}
+                      transition={{ duration: 0.25 }}
+                      className={`h-full rounded-full ${TONES[st.tone].bar}`}
+                    />
+                  </div>
+                  <div className="mt-1.5 text-[11px] text-slate-500 truncate">{st.sub}</div>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+
+          {/* 3 Khối tỷ trọng cốt lõi: S5 (Chi tiết), S7 (Hình thức đi), S9 (Loại vé) */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <SectionCard
+              code="S5"
+              title="Thị trường & quốc tịch khách"
+              meta={`n = ${validResponses.length}`}
+              tone="ocean"
             >
-              {/* 3 Biểu đồ Donut Tổng quan Cơ cấu Mẫu (Click-to-Filter) */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900 uppercase">
-                      Cơ cấu Thị trường: Nội địa vs Quốc tế (S5)
-                    </h3>
-                    <span className="text-[11px] text-slate-400">Click để lọc</span>
-                  </div>
-                  <InteractiveDonutChart
-                    centerValue={`${validResponses.length}`}
-                    centerLabel="Phiếu hợp lệ"
-                    slices={[
-                      {
-                        id: 'dom',
-                        label: 'Khách Nội địa (S5=1..4)',
-                        count: validResponses.length - kpiMetrics.intlCount,
-                        pct: 100 - kpiMetrics.intlPct,
-                        color: '#d12f2f',
-                        isSelected: marketFilter === 'domestic',
-                        onClick: () =>
-                          setMarketFilter((p) => (p === 'domestic' ? 'all' : 'domestic')),
-                      },
-                      {
-                        id: 'intl',
-                        label: 'Khách Quốc tế (S5≥5)',
-                        count: kpiMetrics.intlCount,
-                        pct: kpiMetrics.intlPct,
-                        color: '#4f46e5',
-                        isSelected: marketFilter === 'international',
-                        onClick: () =>
-                          setMarketFilter((p) =>
-                            p === 'international' ? 'all' : 'international'
-                          ),
-                      },
-                    ]}
-                  />
-                </div>
+              <RankedBarList
+                items={buildSingleBreakdown(
+                  validResponses,
+                  'S5',
+                  'S5. Quốc tịch',
+                  S5_OPTIONS,
+                  true
+                )}
+                useCategoricalColors
+              />
+            </SectionCard>
 
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900 uppercase">
-                      Hình thức Chuyến đi: Tự túc vs Tour (S7)
-                    </h3>
-                    <span className="text-[11px] text-slate-400">Click để lọc</span>
+            <SectionCard
+              code="S7"
+              title="Hình thức chuyến đi (FIT / Tour)"
+              meta={`n = ${validResponses.length}`}
+              tone="iris"
+            >
+              <ProportionBreakdown
+                items={buildSingleBreakdown(
+                  validResponses,
+                  'S7',
+                  'S7. Hình thức đi',
+                  S7_OPTIONS
+                )}
+                showCodePrefix
+              />
+
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                <div className="text-xs font-semibold text-slate-700 mb-2">
+                  S8. Tần suất đến Bà Nà Hills
+                </div>
+                <ProportionBreakdown
+                  items={buildSingleBreakdown(
+                    validResponses,
+                    'S8',
+                    'S8. Số lần đến',
+                    S8_OPTIONS
+                  )}
+                  showCodePrefix
+                />
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              code="S9"
+              title="Gói vé / sản phẩm sử dụng"
+              meta={`n = ${validResponses.length}`}
+              tone="brand"
+            >
+              <ProportionBreakdown
+                items={buildSingleBreakdown(
+                  validResponses,
+                  'S9',
+                  'S9. Gói vé',
+                  S9_OPTIONS
+                )}
+                showCodePrefix
+              />
+            </SectionCard>
+          </div>
+
+          {/* 3 Khối nhân khẩu học tiếp theo: S6 (Đi cùng ai), S4 (Độ tuổi), S1 & S3 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <SectionCard
+              code="S6"
+              title="Đặc điểm nhóm đi cùng"
+              meta={`n = ${validResponses.length}`}
+              tone="success"
+            >
+              <ProportionBreakdown
+                items={buildSingleBreakdown(
+                  validResponses,
+                  'S6',
+                  'S6. Đi cùng ai',
+                  S6_OPTIONS
+                )}
+                showCodePrefix
+              />
+            </SectionCard>
+
+            <SectionCard
+              code="S4"
+              title="Cơ cấu độ tuổi đáp viên"
+              meta={`n = ${validResponses.length}`}
+              tone="info"
+            >
+              <ProportionBreakdown
+                items={buildSingleBreakdown(
+                  validResponses,
+                  'S4',
+                  'S4. Độ tuổi',
+                  S4_OPTIONS
+                )}
+                showCodePrefix
+              />
+            </SectionCard>
+
+            <SectionCard
+              code="S1 · S3"
+              title="Khung giờ tham quan & giới tính"
+              meta={`n = ${validResponses.length}`}
+              tone="neutral"
+            >
+              <div className="space-y-3">
+                <div>
+                  <div className="text-xs font-semibold text-slate-700 mb-2">
+                    S1. Thời gian tham quan trong ngày
                   </div>
-                  <InteractiveDonutChart
-                    centerValue={`${kpiMetrics.fitPct}%`}
-                    centerLabel="Tự túc (FIT)"
-                    slices={computeSingleDistribution(validResponses, 'S7', S7_OPTIONS).map(
-                      (d, idx) => ({
-                        id: `s7_${d.code}`,
-                        label: d.label,
-                        count: d.count,
-                        pct: d.pct,
-                        color: idx === 0 ? '#059669' : '#d97706',
-                        isSelected: travelModeFilter === d.code,
-                        onClick: () =>
-                          setTravelModeFilter((p) => (p === d.code ? 'all' : d.code)),
-                      })
+                  <ProportionBreakdown
+                    items={buildSingleBreakdown(
+                      validResponses,
+                      'S1',
+                      'S1. Thời gian',
+                      S1_OPTIONS
                     )}
+                    showCodePrefix
                   />
                 </div>
-
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900 uppercase">
-                      Hành vi Sử dụng F&amp;B Hôm nay (A2)
-                    </h3>
-                    <span className="text-[11px] text-slate-400">Click để lọc</span>
+                <div className="pt-3 border-t border-slate-100">
+                  <div className="text-xs font-semibold text-slate-700 mb-2">
+                    S3. Giới tính đáp viên
                   </div>
-                  <InteractiveDonutChart
-                    centerValue={`${kpiMetrics.fnbPenetrationRate}%`}
-                    centerLabel="Đã dùng F&B"
-                    slices={[
-                      {
-                        id: 'used',
-                        label: 'Đã sử dụng F&B (A2=1..6)',
-                        count: kpiMetrics.usedFnBCount,
-                        pct: kpiMetrics.fnbPenetrationRate,
-                        color: '#0284c7',
-                        isSelected: fnbUsageFilter === 'used',
-                        onClick: () =>
-                          setFnbUsageFilter((p) => (p === 'used' ? 'all' : 'used')),
-                      },
-                      {
-                        id: 'not_used',
-                        label: 'Chưa sử dụng F&B (A2=7)',
-                        count: kpiMetrics.notUsedFnBCount,
-                        pct:
-                          validResponses.length > 0
-                            ? 100 - kpiMetrics.fnbPenetrationRate
-                            : 0,
-                        color: '#e11d48',
-                        isSelected: fnbUsageFilter === 'not_used',
-                        onClick: () =>
-                          setFnbUsageFilter((p) => (p === 'not_used' ? 'all' : 'not_used')),
-                      },
-                    ]}
+                  <ProportionBreakdown
+                    items={buildSingleBreakdown(
+                      validResponses,
+                      'S3',
+                      'S3. Giới tính',
+                      S3_OPTIONS
+                    )}
+                    showCodePrefix
                   />
                 </div>
               </div>
+            </SectionCard>
+          </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Tiến độ Quota theo Điểm khảo sát × Nội địa / Quốc tế */}
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Tiến độ Quota theo Điểm Khảo Sát &amp; Phân Khúc (Click để lọc)
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Theo dõi tiến độ thực tế tại 5 vị trí trực so với chỉ tiêu Quota
-                      </p>
-                    </div>
-                    <MapPin className="w-4 h-4 text-[#d12f2f]" />
-                  </div>
-
-                  <div className="space-y-2.5">
+          {/* Bảng Tiến độ Điểm khảo sát & Phỏng vấn viên (Chuẩn OverviewMetricTable trong Reports.tsx) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <SectionCard
+              title="Tiến độ mẫu theo điểm khảo sát"
+              meta={`${config.locations.length} điểm trực`}
+              tone="brand"
+              className="lg:col-span-7"
+              bodyClassName="p-0"
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200/80 bg-slate-50/70 text-slate-500 font-medium">
+                      <th className="py-2.5 px-4">Điểm khảo sát</th>
+                      <th className="py-2.5 px-3 text-right tabular-nums">Hợp lệ</th>
+                      <th className="py-2.5 px-3 text-right tabular-nums">Chỉ tiêu</th>
+                      <th className="py-2.5 px-3 w-36">Tiến độ</th>
+                      <th className="py-2.5 px-4 text-right tabular-nums">Tỷ lệ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
                     {config.locations.map((loc) => {
-                      const locResponses = validResponses.filter((r) => r.locationId === loc.id);
-                      const locCount = locResponses.length;
-                      const locDom = locResponses.filter((r) => {
-                        const s5 = getSingleAnswer(r, 'S5');
-                        return s5 !== null && s5 >= 1 && s5 <= 4;
-                      }).length;
-                      const locIntl = locCount - locDom;
-                      const locScr = baseContextResponses.filter(
-                        (r) => r.locationId === loc.id && r.status === 'screenout'
-                      ).length;
+                      const locValid = validResponses.filter((r) => r.locationId === loc.id);
+                      const count = locValid.length;
                       const pct =
                         loc.quotaTarget > 0
-                          ? Math.min(100, Math.round((locCount / loc.quotaTarget) * 100))
+                          ? Math.min(100, Math.round((count / loc.quotaTarget) * 100))
                           : 0;
                       const isSelected = locationFilter === loc.id;
                       return (
-                        <div
+                        <tr
                           key={loc.id}
                           onClick={() =>
                             setLocationFilter((prev) => (prev === loc.id ? 'all' : loc.id))
                           }
-                          className={`p-2.5 rounded-xl border transition cursor-pointer ${
-                            isSelected
-                              ? 'bg-red-50/50 border-[#d12f2f] ring-1 ring-[#d12f2f]'
-                              : 'bg-slate-50/70 border-slate-200/80 hover:bg-slate-100/70'
+                          className={`cursor-pointer transition-colors hover:bg-slate-50 ${
+                            isSelected ? 'bg-red-50/50 font-semibold' : ''
                           }`}
                         >
-                          <div className="flex flex-wrap items-center justify-between gap-1 text-xs mb-1.5">
-                            <span className="font-bold text-slate-800">{loc.name}</span>
-                            <div className="flex items-center gap-2 tabular-nums">
-                              <span className="text-[11px] text-slate-500">
-                                Nội địa: <strong>{locDom}</strong> • Quốc tế:{' '}
-                                <strong>{locIntl}</strong>
-                                {locScr > 0 ? ` • Screen-out: ${locScr}` : ''}
-                              </span>
-                              <span className="font-bold text-slate-900">
-                                {locCount}/{loc.quotaTarget} ({pct}%)
-                              </span>
+                          <td className="py-2.5 px-4 font-medium text-slate-800">
+                            {loc.name}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-semibold tabular-nums text-slate-900">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDrilldown({
+                                  title: `Điểm khảo sát: ${loc.name}`,
+                                  subtitle: `${count} phiếu hợp lệ`,
+                                  items: locValid,
+                                });
+                              }}
+                              className="hover:text-[#d12f2f] hover:underline cursor-pointer"
+                            >
+                              {count}
+                            </button>
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums text-slate-500">
+                            {loc.quotaTarget}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                              <motion.div
+                                initial={{ width: 0 }}
+                                animate={{ width: `${pct}%` }}
+                                transition={{ duration: 0.25 }}
+                                className={`h-full rounded-full ${
+                                  pct >= 100 ? 'bg-emerald-500' : 'bg-[#d12f2f]'
+                                }`}
+                              />
                             </div>
-                          </div>
-                          <div className="h-2.5 bg-slate-200 rounded-full overflow-hidden">
-                            <motion.div
-                              initial={{ width: 0 }}
-                              animate={{ width: `${pct}%` }}
-                              transition={{ type: 'spring', stiffness: 240, damping: 28 }}
-                              className="h-full bg-[#d12f2f] rounded-full"
-                            />
-                          </div>
-                        </div>
+                          </td>
+                          <td className="py-2.5 px-4 text-right font-medium tabular-nums text-slate-600">
+                            {pct}%
+                          </td>
+                        </tr>
                       );
                     })}
-                  </div>
-                </div>
-
-                {/* Cơ cấu Thị trường & Quốc tịch S5 */}
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        S5. Chi tiết Vùng miền &amp; Quốc tịch Khách (Click để lọc)
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Bấm vào từng dòng quốc tịch/vùng miền để lọc toàn bộ biểu đồ bên dưới
-                      </p>
-                    </div>
-                    <Users className="w-4 h-4 text-indigo-600" />
-                  </div>
-
-                  {renderAnimatedHorizontalBars(
-                    computeSingleDistribution(validResponses, 'S5', S5_OPTIONS).map((d) => ({
-                      ...d,
-                      isSelected: marketFilter === `code:${d.code}`,
-                      onClick: () =>
-                        setMarketFilter((prev) =>
-                          prev === `code:${d.code}` ? 'all' : `code:${d.code}`
-                        ),
-                    })),
-                    'bg-indigo-600'
-                  )}
-                </div>
+                  </tbody>
+                </table>
               </div>
+            </SectionCard>
 
-              {/* Hàng 2 Phần S: S3/S4, S6, S9/S8 & Bảng năng suất PVV */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
-                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                    S3. Giới tính &amp; S4. Độ tuổi
-                  </h3>
-                  {renderAnimatedHorizontalBars(
-                    computeSingleDistribution(validResponses, 'S3', S3_OPTIONS),
-                    'bg-sky-600'
-                  )}
-                  <div className="border-t border-slate-100 pt-2">
-                    {renderAnimatedHorizontalBars(
-                      computeSingleDistribution(validResponses, 'S4', S4_OPTIONS),
-                      'bg-teal-600'
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
-                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                    S6. Nhóm đi cùng &amp; S8. Số lần đến Bà Nà
-                  </h3>
-                  {renderAnimatedHorizontalBars(
-                    computeSingleDistribution(validResponses, 'S6', S6_OPTIONS),
-                    'bg-violet-600'
-                  )}
-                  <div className="border-t border-slate-100 pt-2">
-                    {renderAnimatedHorizontalBars(
-                      computeSingleDistribution(validResponses, 'S8', S8_OPTIONS),
-                      'bg-slate-700'
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
-                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                    S9. Loại vé / Gói sản phẩm (Click để lọc)
-                  </h3>
-                  {renderAnimatedHorizontalBars(
-                    computeSingleDistribution(validResponses, 'S9', S9_OPTIONS).map((d) => ({
-                      ...d,
-                      isSelected: ticketFilter === d.code,
-                      onClick: () =>
-                        setTicketFilter((prev) =>
-                          prev === d.code ? 'all' : (d.code as number)
-                        ),
-                    })),
-                    'bg-emerald-600'
-                  )}
-                </div>
-              </div>
-
-              {/* Bảng Xếp Hạng Năng Suất Phỏng Vấn Viên (PVV Leaderboard) */}
-              {interviewers.length > 0 && (
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Award className="w-4 h-4 text-amber-500" />
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Thống Kê Năng Suất Phỏng Vấn Viên (Click vào PVV để lọc phiếu)
-                      </h3>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                    {interviewers.map((pvv) => {
-                      const pvvValid = validResponses.filter(
-                        (r) =>
-                          (r.interviewerEmail || r.interviewerName || r.interviewerUid) ===
-                          pvv.id
-                      );
-                      const pvvScr = baseContextResponses.filter(
-                        (r) =>
-                          (r.interviewerEmail || r.interviewerName || r.interviewerUid) ===
-                            pvv.id && r.status === 'screenout'
-                      );
-                      const avgDur =
-                        pvvValid.length > 0
-                          ? Math.round(
-                              pvvValid.reduce((acc, r) => acc + (r.durationSeconds || 0), 0) /
-                                pvvValid.length
-                            )
-                          : 0;
-                      const isSel = interviewerFilter === pvv.id;
-                      return (
-                        <div
-                          key={pvv.id}
-                          onClick={() =>
-                            setInterviewerFilter((prev) => (prev === pvv.id ? 'all' : pvv.id))
-                          }
-                          className={`p-3 rounded-xl border transition cursor-pointer ${
-                            isSel
-                              ? 'bg-red-50/60 border-[#d12f2f] ring-1 ring-[#d12f2f]'
-                              : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
-                          }`}
-                        >
-                          <div className="font-bold text-xs text-slate-900 truncate">
-                            {pvv.name}
-                          </div>
-                          <div className="flex items-baseline justify-between mt-1">
-                            <span className="text-lg font-black text-[#d12f2f] tabular-nums">
-                              {pvvValid.length} phiếu
-                            </span>
-                            <span className="text-[11px] text-slate-500">
-                              TB: {Math.floor(avgDur / 60)}p{String(avgDur % 60).padStart(2, '0')}s
-                            </span>
-                          </div>
-                          {pvvScr.length > 0 && (
-                            <div className="text-[10px] text-rose-500 mt-0.5">
-                              Screen-out: {pvvScr.length} phiếu
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          )}
-
-          {/* ======================================================================
-              SECTION 2: SPENDING BEHAVIOR, MATRIX A5 & BARRIERS (PHẦN A)
-             ====================================================================== */}
-          {(activeSubTab === 'all' || activeSubTab === 'spending') && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-4"
+            <SectionCard
+              title="Năng suất phỏng vấn viên (PVV)"
+              meta={`${interviewers.length} nhân sự`}
+              tone="ocean"
+              className="lg:col-span-5"
+              bodyClassName="p-0"
             >
-              {/* Biểu đồ Cột Đứng Kép (Grouped Vertical Column Chart) + Thanh Ngang: A1 vs A4 */}
-              <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Biểu Đồ Cột Đối Chiếu: Ngân Sách Dự Kiến (A1) vs Chi Tiêu Thực Tế (A4)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      So sánh trực quan phân bổ mức dự kiến chi (A1) và thực chi (A4) trên 8 bậc
-                      ngân sách
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs font-semibold">
-                    <span className="inline-flex items-center gap-1.5 text-sky-700">
-                      <span className="w-3 h-3 rounded-xs bg-sky-500" />
-                      A1. Ngân sách dự kiến
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 text-emerald-700">
-                      <span className="w-3 h-3 rounded-xs bg-emerald-600" />
-                      A4. Chi tiêu thực tế
-                    </span>
-                  </div>
-                </div>
-
-                {/* Vertical Grouped Columns */}
-                {(() => {
-                  const a1Dist = computeSingleDistribution(validResponses, 'A1', A1_OPTIONS);
-                  const a4Dist = computeSingleDistribution(
-                    validResponses.filter((r) => !getMultiAnswer(r, 'A2').includes(7)),
-                    'A4',
-                    A4_OPTIONS
-                  );
-                  const maxColPct = Math.max(
-                    ...a1Dist.map((d) => d.pct),
-                    ...a4Dist.map((d) => d.pct),
-                    10
-                  );
-
-                  return (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5 pt-2">
-                      {qOpts('A1', A1_OPTIONS).map((tier) => {
-                        const a1Item = a1Dist.find((x) => x.code === tier.code);
-                        const a4Item = a4Dist.find((x) => x.code === tier.code);
-                        const a1Pct = a1Item?.pct || 0;
-                        const a4Pct = a4Item?.pct || 0;
-                        const h1 = a1Pct > 0 ? Math.max((a1Pct / maxColPct) * 100, 6) : 0;
-                        const h4 = a4Pct > 0 ? Math.max((a4Pct / maxColPct) * 100, 6) : 0;
-
-                        return (
-                          <div
-                            key={tier.code}
-                            className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col justify-between"
-                          >
-                            <div className="h-32 flex items-end justify-center gap-2.5 pt-4 border-b border-slate-200 px-2">
-                              <div className="flex flex-col items-center justify-end h-full flex-1">
-                                <span className="text-[10px] font-bold text-sky-700 mb-1 tabular-nums">
-                                  {a1Pct}%
-                                </span>
-                                <motion.div
-                                  initial={{ height: 0 }}
-                                  animate={{ height: `${h1}%` }}
-                                  transition={{ type: 'spring', stiffness: 220, damping: 24 }}
-                                  className="w-full max-w-[24px] bg-sky-500 rounded-t-md"
-                                  title={`A1 (${tier.label}): ${a1Item?.count || 0} phiếu (${a1Pct}%)`}
-                                />
-                              </div>
-
-                              <div className="flex flex-col items-center justify-end h-full flex-1">
-                                <span className="text-[10px] font-bold text-emerald-700 mb-1 tabular-nums">
-                                  {a4Pct}%
-                                </span>
-                                <motion.div
-                                  initial={{ height: 0 }}
-                                  animate={{ height: `${h4}%` }}
-                                  transition={{ type: 'spring', stiffness: 220, damping: 24 }}
-                                  className="w-full max-w-[24px] bg-emerald-600 rounded-t-md"
-                                  title={`A4 (${tier.label}): ${a4Item?.count || 0} phiếu (${a4Pct}%)`}
-                                />
-                              </div>
-                            </div>
-                            <div className="pt-2 text-center">
-                              <div className="text-[11px] font-bold text-slate-800 leading-tight line-clamp-2">
-                                {tier.code}. {tier.label}
-                              </div>
-                              <div className="text-[10px] text-slate-400 mt-0.5 tabular-nums">
-                                A1: {a1Item?.count || 0} • A4: {a4Item?.count || 0}
-                              </div>
-                            </div>
-                          </div>
+              <div className="overflow-x-auto max-h-72">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="sticky top-0 bg-slate-50 border-b border-slate-200/80 text-slate-500 font-medium">
+                    <tr>
+                      <th className="py-2.5 px-4">Phỏng vấn viên</th>
+                      <th className="py-2.5 px-2 text-right tabular-nums">Hợp lệ</th>
+                      <th className="py-2.5 px-2 text-right tabular-nums">Dừng</th>
+                      <th className="py-2.5 px-4 text-right tabular-nums">TG TB</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {interviewers.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-6 text-center text-slate-400">
+                          Chưa có dữ liệu PVV
+                        </td>
+                      </tr>
+                    ) : (
+                      interviewers.map((pvv) => {
+                        const pvvAll = baseContextResponses.filter(
+                          (r) => r.interviewerUid === pvv.id
                         );
-                      })}
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* A2: Tỷ lệ sử dụng từng loại hình & Ma trận A5: Mức chi theo từng loại hình */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <h3 className="text-sm font-bold text-slate-900">
-                    A2. Tỷ lệ Thâm nhập Từng Loại Hình Dịch Vụ F&amp;B
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Câu hỏi chọn nhiều đáp án — Tỷ lệ % tính trên tổng số đáp viên hợp lệ (
-                    {validResponses.length} phiếu)
-                  </p>
-                  {renderAnimatedHorizontalBars(
-                    computeMultiDistribution(validResponses, 'A2', A2_OPTIONS),
-                    'bg-[#d12f2f]'
-                  )}
-                </div>
-
-                {/* Ma trận A5 */}
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Ma trận A5. Cơ cấu Mức Chi Theo Từng Loại Hình Đã Dùng
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Phân bổ 5 bậc chi tiêu bình quân 1 người cho mỗi nhóm dịch vụ
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5 text-[10px]">
-                    {A5_COLUMNS.map((col, idx) => {
-                      const colors = [
-                        'bg-sky-400',
-                        'bg-emerald-500',
-                        'bg-amber-500',
-                        'bg-orange-500',
-                        'bg-rose-600',
-                      ];
-                      return (
-                        <span
-                          key={col.code}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold"
-                        >
-                          <span className={`w-2 h-2 rounded-xs ${colors[idx]}`} />
-                          {col.label}
-                        </span>
-                      );
-                    })}
-                  </div>
-
-                  <div className="space-y-3 pt-1">
-                    {A5_ROWS.map((row) => {
-                      const counts = A5_COLUMNS.map(
-                        (col) =>
-                          validResponses.filter((r) => r.A5?.[row.key] === col.code).length
-                      );
-                      const totalRow = counts.reduce((a, b) => a + b, 0);
-                      const pcts = counts.map((c) =>
-                        totalRow > 0 ? Math.round((c / totalRow) * 100) : 0
-                      );
-                      const colors = [
-                        'bg-sky-400',
-                        'bg-emerald-500',
-                        'bg-amber-500',
-                        'bg-orange-500',
-                        'bg-rose-600',
-                      ];
-
-                      return (
-                        <div
-                          key={row.key}
-                          className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5"
-                        >
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-bold text-slate-800">{row.label}</span>
-                            <span className="text-slate-500 font-semibold">
-                              {totalRow} lượt trả lời
-                            </span>
-                          </div>
-                          <div className="h-4 bg-slate-200 rounded-md overflow-hidden flex">
-                            {pcts.map((pct, idx) =>
-                              pct > 0 ? (
-                                <motion.div
-                                  key={idx}
-                                  initial={{ width: 0 }}
-                                  animate={{ width: `${pct}%` }}
-                                  transition={{ type: 'spring', stiffness: 220, damping: 26 }}
-                                  className={`h-full ${colors[idx]} flex items-center justify-center text-[9px] font-bold text-white`}
-                                  title={`${A5_COLUMNS[idx].label}: ${counts[idx]} phiếu (${pct}%)`}
-                                >
-                                  {pct >= 10 ? `${pct}%` : ''}
-                                </motion.div>
-                              ) : null
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* Nhánh Chưa dùng F&B (A3 & A3.4) + Thời điểm mua (A6) & Quà mang về (A7, A8) */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        A3. Rào cản Chưa Sử Dụng F&amp;B &amp; A3.4. Khả năng Chuyển đổi
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Phân tích trên nhóm khách chưa sử dụng dịch vụ F&amp;B (
-                        {kpiMetrics.notUsedFnBCount} phiếu)
-                      </p>
-                    </div>
-                  </div>
-                  {renderAnimatedHorizontalBars(
-                    computeMultiDistribution(validResponses, 'A3', A3_OPTIONS),
-                    'bg-rose-600'
-                  )}
-                  <div className="border-t border-slate-100 pt-3">
-                    <div className="text-xs font-bold text-slate-700 mb-2">
-                      A3.4. Khả năng sử dụng nếu các yếu tố trên được cải thiện:
-                    </div>
-                    {renderAnimatedHorizontalBars(
-                      computeSingleDistribution(validResponses, 'A3_4', A3_4_OPTIONS),
-                      'bg-emerald-600'
+                        const pvvValid = pvvAll.filter((r) => r.status === 'completed');
+                        const pvvStop = pvvAll.filter((r) => r.status === 'screenout').length;
+                        const avgDur =
+                          pvvValid.length > 0
+                            ? Math.round(
+                                pvvValid.reduce((s, r) => s + (r.durationSeconds || 0), 0) /
+                                  pvvValid.length
+                              )
+                            : 0;
+                        const isSelected = interviewerFilter === pvv.id;
+                        return (
+                          <tr
+                            key={pvv.id}
+                            onClick={() =>
+                              setInterviewerFilter((prev) =>
+                                prev === pvv.id ? 'all' : pvv.id
+                              )
+                            }
+                            className={`cursor-pointer transition-colors hover:bg-slate-50 ${
+                              isSelected ? 'bg-red-50/50 font-semibold' : ''
+                            }`}
+                          >
+                            <td className="py-2 px-4 font-medium text-slate-800 truncate max-w-[160px]">
+                              {pvv.name}
+                            </td>
+                            <td className="py-2 px-2 text-right font-semibold tabular-nums text-emerald-700">
+                              {pvvValid.length}
+                            </td>
+                            <td className="py-2 px-2 text-right tabular-nums text-slate-500">
+                              {pvvStop}
+                            </td>
+                            <td className="py-2 px-4 text-right tabular-nums text-slate-500">
+                              {avgDur}s
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <h3 className="text-sm font-bold text-slate-900">
-                    A6. Thời điểm Quyết định Mua &amp; A7/A8. Nhu cầu Quà Mang Về
-                  </h3>
-                  {renderAnimatedHorizontalBars(
-                    computeMultiDistribution(validResponses, 'A6', A6_OPTIONS),
-                    'bg-sky-600'
-                  )}
-                  <div className="border-t border-slate-100 pt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <div className="text-xs font-bold text-slate-700 mb-2">
-                        A7. Sẵn sàng mua quà F&amp;B mang về:
-                      </div>
-                      {renderAnimatedHorizontalBars(
-                        computeSingleDistribution(validResponses, 'A7', A7_OPTIONS),
-                        'bg-amber-600'
-                      )}
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-slate-700 mb-2">
-                        A8. Mức dự kiến chi mua quà:
-                      </div>
-                      {renderAnimatedHorizontalBars(
-                        computeSingleDistribution(validResponses, 'A8', A8_OPTIONS),
-                        'bg-purple-600'
-                      )}
-                    </div>
-                  </div>
-                </div>
+                  </tbody>
+                </table>
               </div>
-            </motion.div>
-          )}
+            </SectionCard>
+          </div>
+        </div>
+      )}
 
-          {/* ======================================================================
-              SECTION 3: PREFERENCES, PRICE PERCEPTION (B4) & LIKERT SERVQUAL (B5)
-             ====================================================================== */}
-          {(activeSubTab === 'all' || activeSubTab === 'preferences') && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-4"
+      {/* ==========================================================================
+          TAB 2: HÀNH VI & CHI TIÊU F&B (PHẦN A)
+         ========================================================================== */}
+      {activeSubTab === 'spending' && (
+        <div className="space-y-4">
+          {/* A2 vs A3 */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <SectionCard
+              code="A2"
+              title="Loại hình dịch vụ ăn uống đã sử dụng"
+              meta={`Chọn nhiều · n = ${validResponses.length}`}
+              tone="success"
             >
-              {/* Biểu đồ Ma trận Likert 5 mức B5 (SERVQUAL) kết hợp Biểu đồ Radar */}
-              {renderLikertMatrixChart(
-                'B5',
-                config.questions.B5?.title ||
-                  'B5. Đánh giá mức độ quan trọng của các yếu tố khi quyết định sử dụng F&B (Khung SERVQUAL)',
-                'Kết hợp Biểu đồ Radar 6 chiều SERVQUAL & Biểu đồ Stacked 100% xếp hạng theo Điểm Trung Bình (Mean Score)',
-                true
-              )}
+              <RankedBarList
+                items={buildMultiBreakdown(
+                  validResponses,
+                  'A2',
+                  'A2. Dịch vụ đã dùng',
+                  A2_OPTIONS
+                )}
+                barHex="#10b981"
+              />
+            </SectionCard>
 
-              {/* Ma trận B4: Cảm nhận mức giá hiện tại (1: Đắt, 2: Hợp lý, 3: Rẻ) & Sở thích B1/B2 */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Ma trận B4. Cảm Nhận Mức Giá Hiện Tại Theo Nhóm Sản Phẩm
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Tỷ lệ đánh giá Đắt (1) • Hợp lý (2) • Rẻ (3) trên 5 nhóm sản phẩm cốt lõi
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 text-[11px] font-bold">
-                      <span className="inline-flex items-center gap-1 text-rose-600">
-                        <span className="w-2.5 h-2.5 rounded-xs bg-rose-500" /> 1 - Đắt
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-emerald-700">
-                        <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500" /> 2 - Hợp lý
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-sky-600">
-                        <span className="w-2.5 h-2.5 rounded-xs bg-sky-500" /> 3 - Rẻ
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 pt-1">
-                    {B4_ROWS.map((row) => {
-                      const c1 = validResponses.filter((r) => r.B4?.[row.key] === 1).length;
-                      const c2 = validResponses.filter((r) => r.B4?.[row.key] === 2).length;
-                      const c3 = validResponses.filter((r) => r.B4?.[row.key] === 3).length;
-                      const total = c1 + c2 + c3;
-                      const p1 = total > 0 ? Math.round((c1 / total) * 100) : 0;
-                      const p2 = total > 0 ? Math.round((c2 / total) * 100) : 0;
-                      const p3 = total > 0 ? Math.round((c3 / total) * 100) : 0;
-
-                      return (
-                        <div
-                          key={row.key}
-                          className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5"
-                        >
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-bold text-slate-800">{row.label}</span>
-                            <span className="text-slate-500 font-semibold">
-                              Đắt: <strong className="text-rose-600">{p1}%</strong> • Hợp lý:{' '}
-                              <strong className="text-emerald-700">{p2}%</strong> • Rẻ:{' '}
-                              <strong className="text-sky-600">{p3}%</strong>
-                            </span>
-                          </div>
-                          <div className="h-4 bg-slate-200 rounded-md overflow-hidden flex">
-                            {p1 > 0 && (
-                              <motion.div
-                                initial={{ width: 0 }}
-                                animate={{ width: `${p1}%` }}
-                                transition={{ type: 'spring', stiffness: 220, damping: 26 }}
-                                className="h-full bg-rose-500 flex items-center justify-center text-[10px] font-bold text-white"
-                                title={`${B4_PERCEPTION_OPTIONS[0].label}: ${c1} phiếu (${p1}%)`}
-                              >
-                                {p1 >= 10 ? `${p1}%` : ''}
-                              </motion.div>
-                            )}
-                            {p2 > 0 && (
-                              <motion.div
-                                initial={{ width: 0 }}
-                                animate={{ width: `${p2}%` }}
-                                transition={{ type: 'spring', stiffness: 220, damping: 26 }}
-                                className="h-full bg-emerald-500 flex items-center justify-center text-[10px] font-bold text-white"
-                                title={`${B4_PERCEPTION_OPTIONS[1].label}: ${c2} phiếu (${p2}%)`}
-                              >
-                                {p2 >= 10 ? `${p2}%` : ''}
-                              </motion.div>
-                            )}
-                            {p3 > 0 && (
-                              <motion.div
-                                initial={{ width: 0 }}
-                                animate={{ width: `${p3}%` }}
-                                transition={{ type: 'spring', stiffness: 220, damping: 26 }}
-                                className="h-full bg-sky-500 flex items-center justify-center text-[10px] font-bold text-white"
-                                title={`${B4_PERCEPTION_OPTIONS[2].label}: ${c3} phiếu (${p3}%)`}
-                              >
-                                {p3 >= 10 ? `${p3}%` : ''}
-                              </motion.div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* B1 & B2 */}
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <h3 className="text-sm font-bold text-slate-900">
-                    B1. Nhóm Sản Phẩm Ẩm Thực Ưu Tiên &amp; B2. Hình Thức Phục Vụ
-                  </h3>
-                  {renderAnimatedHorizontalBars(
-                    computeMultiDistribution(validResponses, 'B1', B1_OPTIONS),
-                    'bg-[#d12f2f]'
-                  )}
-                  <div className="border-t border-slate-100 pt-3">
-                    <div className="text-xs font-bold text-slate-800 mb-2">
-                      B2. Hình thức phục vụ ưu tiên nhất:
-                    </div>
-                    {renderAnimatedHorizontalBars(
-                      computeMultiDistribution(validResponses, 'B2', B2_OPTIONS),
-                      'bg-indigo-600'
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Khẩu vị B3.1, B3.2, B3.3 */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-2.5">
-                  <h3 className="text-xs font-bold text-slate-900 uppercase">
-                    B3.1. Khẩu vị — Độ cay
-                  </h3>
-                  {renderAnimatedHorizontalBars(
-                    computeSingleDistribution(validResponses, 'B3_1', B3_1_OPTIONS),
-                    'bg-orange-500'
-                  )}
-                </div>
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-2.5">
-                  <h3 className="text-xs font-bold text-slate-900 uppercase">
-                    B3.2. Khẩu vị — Độ đậm vị
-                  </h3>
-                  {renderAnimatedHorizontalBars(
-                    computeSingleDistribution(validResponses, 'B3_2', B3_2_OPTIONS),
-                    'bg-amber-600'
-                  )}
-                </div>
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-2.5">
-                  <h3 className="text-xs font-bold text-slate-900 uppercase">
-                    B3.3. Khẩu vị — Nhiệt độ món
-                  </h3>
-                  {renderAnimatedHorizontalBars(
-                    computeSingleDistribution(validResponses, 'B3_3', B3_3_OPTIONS),
-                    'bg-rose-500'
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* ======================================================================
-              SECTION 4: EXPECTATIONS, SUGGESTIONS (PHẦN C) & VERBATIMS
-             ====================================================================== */}
-          {(activeSubTab === 'all' || activeSubTab === 'expectations') && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-4"
+            <SectionCard
+              code="A3"
+              title="Lý do chưa sử dụng dịch vụ F&B tại Bà Nà"
+              meta={`Nhóm A2=7 · n = ${kpiMetrics.notUsedFnBCount}`}
+              tone="danger"
             >
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        C1. Khung Giờ Phát Sinh Nhu Cầu Ăn Uống Cao Nhất
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Phân bổ nhu cầu theo các khung giờ trong ngày tại Bà Nà Hills
-                      </p>
-                    </div>
-                    <Clock className="w-4 h-4 text-sky-600" />
-                  </div>
-                  {renderAnimatedHorizontalBars(
-                    computeMultiDistribution(validResponses, 'C1', C1_OPTIONS),
-                    'bg-sky-600'
-                  )}
+              <RankedBarList
+                items={buildMultiBreakdown(
+                  validResponses.filter((r) => getMultiAnswer(r, 'A2').includes(7)),
+                  'A3',
+                  'A3. Rào cản chưa dùng F&B',
+                  A3_OPTIONS
+                )}
+                barHex="#f43f5e"
+                emptyText="Không có đáp viên nào thuộc nhóm chưa dùng F&B (A2=7)"
+              />
+            </SectionCard>
+          </div>
 
-                  <div className="border-t border-slate-100 pt-3">
-                    <h4 className="text-xs font-bold text-slate-900 mb-2">
-                      C2. Nhu Cầu Ăn Uống Đặc Biệt (Trẻ em / Chay / Halal / Dị ứng)
-                    </h4>
-                    {renderAnimatedHorizontalBars(
-                      computeMultiDistribution(validResponses, 'C2', C2_OPTIONS),
-                      'bg-teal-600'
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <h3 className="text-sm font-bold text-slate-900">
-                    C3. Top Đề Xuất Cần Ưu Tiên Cải Thiện Nhất
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Xếp hạng các yếu tố đáp viên mong muốn cải thiện để nâng cao trải nghiệm F&amp;B
-                  </p>
-                  {renderAnimatedHorizontalBars(
-                    computeMultiDistribution(validResponses, 'C3', C3_OPTIONS),
-                    'bg-purple-600'
-                  )}
-                </div>
-              </div>
-
-              {/* Tổng hợp Ý kiến đóng góp mở (C4_note, A3.1..A3.3, và "Khác - ghi rõ") */}
-              {openVerbatims.length > 0 && (
-                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <MessageSquareQuote className="w-4 h-4 text-[#d12f2f]" />
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Tổng Hợp Ý Kiến Đóng Góp Mở, Câu Trả Lời Tự Luận &amp; &ldquo;Khác (Ghi Rõ)&rdquo; ({openVerbatims.length})
-                      </h3>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-80 overflow-y-auto pr-1">
-                    {openVerbatims.map((v, idx) => (
-                      <div
-                        key={idx}
-                        className="p-3 rounded-xl bg-slate-50 border border-slate-200/90 space-y-1 text-xs"
-                      >
-                        <div className="flex items-center justify-between text-[11px] text-slate-500">
-                          <span className="font-mono font-bold text-slate-800">
-                            {v.surveyCode} • {v.locationName}
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-red-50 text-[#d12f2f] font-semibold">
-                            {v.tag}
-                          </span>
-                        </div>
-                        <p className="text-slate-900 font-medium leading-snug">{v.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          )}
-
-          {/* ======================================================================
-              SECTION 5: CROSS-TABULATION & MULTI-SEGMENT COMPARISON MATRIX
-             ====================================================================== */}
-          {(activeSubTab === 'all' || activeSubTab === 'crosstab') && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3"
+          {/* Đối chiếu Ngân sách dự kiến (A1) vs Chi tiêu thực tế (A4) & A4.1 */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <SectionCard
+              code="A1 · A4"
+              title="Đối chiếu ngân sách dự kiến (A1) và chi tiêu thực tế bình quân/người (A4)"
+              meta={`TB A1: ~${kpiMetrics.avgPlannedBudget}k · TB A4: ~${kpiMetrics.avgActualSpend}k`}
+              tone="ocean"
+              className="lg:col-span-7"
+              bodyClassName="p-0"
             >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Table2 className="w-4 h-4 text-[#d12f2f]" />
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Ma Trận Phân Tích Chéo Đa Chiều (Cross-Tabulation Benchmark)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      So sánh trực tiếp các chỉ số cốt lõi giữa Nội địa vs Quốc tế, FIT vs Tour, và
-                      5 Điểm khảo sát
-                    </p>
-                  </div>
-                </div>
-              </div>
-
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
-                    <tr className="bg-slate-900 text-white font-bold">
-                      <th className="py-2.5 px-3 rounded-tl-xl">Phân khúc / Nhóm đối sánh</th>
-                      <th className="py-2.5 px-3 text-right">Cỡ mẫu (N)</th>
-                      <th className="py-2.5 px-3 text-right">% Dùng F&amp;B (A2)</th>
-                      <th className="py-2.5 px-3 text-right">Dự kiến TB (A1)</th>
-                      <th className="py-2.5 px-3 text-right">Thực chi TB (A4)</th>
-                      <th className="py-2.5 px-3 text-right">Thấy Buffet Đắt (B4)</th>
-                      <th className="py-2.5 px-3 text-right rounded-tr-xl">Điểm SERVQUAL (B5)</th>
+                    <tr className="border-b border-slate-200/80 bg-slate-50/70 text-slate-500 font-medium">
+                      <th className="py-2.5 px-4">Mức chi tiêu / người</th>
+                      <th className="py-2.5 px-3 text-right tabular-nums">Dự kiến (A1)</th>
+                      <th className="py-2.5 px-3 text-right tabular-nums">Thực tế (A4)</th>
+                      <th className="py-2.5 px-4 w-48">So sánh tỷ trọng (A1 vs A4)</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {[
-                      {
-                        group: 'Toàn bộ mẫu đang lọc',
-                        subset: validResponses,
-                        highlight: true,
-                      },
-                      {
-                        group: 'Khách Nội địa (S5 = 1..4)',
-                        subset: validResponses.filter((r) => {
-                          const s5 = getSingleAnswer(r, 'S5');
-                          return s5 !== null && s5 >= 1 && s5 <= 4;
-                        }),
-                      },
-                      {
-                        group: 'Khách Quốc tế (S5 ≥ 5)',
-                        subset: validResponses.filter((r) => {
-                          const s5 = getSingleAnswer(r, 'S5');
-                          return s5 !== null && s5 >= 5;
-                        }),
-                      },
-                      {
-                        group: 'Đi tự túc - FIT (S7 = 1)',
-                        subset: validResponses.filter((r) => getSingleAnswer(r, 'S7') === 1),
-                      },
-                      {
-                        group: 'Đi theo Tour trọn gói (S7 = 2)',
-                        subset: validResponses.filter((r) => getSingleAnswer(r, 'S7') === 2),
-                      },
-                      ...config.locations.map((loc) => ({
-                        group: `Vị trí: ${loc.name}`,
-                        subset: validResponses.filter((r) => r.locationId === loc.id),
-                      })),
-                    ].map((row, idx) => {
-                      const m = computeSubsetMetrics(row.subset);
+                  <tbody className="divide-y divide-slate-100">
+                    {qOpts('A1', A1_OPTIONS).map((opt) => {
+                      const a1Count = validResponses.filter(
+                        (r) => getSingleAnswer(r, 'A1') === opt.code
+                      ).length;
+                      const a1Pct =
+                        validResponses.length > 0
+                          ? Math.round((a1Count / validResponses.length) * 100)
+                          : 0;
+
+                      const usedList = validResponses.filter((r) => {
+                        const a2 = getMultiAnswer(r, 'A2');
+                        return a2.length > 0 && !a2.includes(7);
+                      });
+                      const a4Count = usedList.filter(
+                        (r) => getSingleAnswer(r, 'A4') === opt.code
+                      ).length;
+                      const a4Pct =
+                        usedList.length > 0
+                          ? Math.round((a4Count / usedList.length) * 100)
+                          : 0;
+
                       return (
+                        <tr key={opt.code} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-2 px-4 font-medium text-slate-800">
+                            <span className="font-mono text-[11px] text-slate-400 mr-1.5">
+                              {opt.code}.
+                            </span>
+                            {opt.label}
+                          </td>
+                          <td className="py-2 px-3 text-right tabular-nums text-cyan-700 font-medium">
+                            {a1Count} <span className="text-slate-400">({a1Pct}%)</span>
+                          </td>
+                          <td className="py-2 px-3 text-right tabular-nums text-[#d12f2f] font-semibold">
+                            {a4Count} <span className="text-slate-400 font-normal">({a4Pct}%)</span>
+                          </td>
+                          <td className="py-2 px-4">
+                            <div className="space-y-1">
+                              <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                                <motion.div
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${a1Pct}%` }}
+                                  className="h-full rounded-full bg-cyan-600"
+                                />
+                              </div>
+                              <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                                <motion.div
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${a4Pct}%` }}
+                                  className="h-full rounded-full bg-[#d12f2f]"
+                                />
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              code="A4.1"
+              title="Nguyên nhân chi tiêu thực tế chênh lệch dự kiến"
+              meta="Khi A4 ≠ A1"
+              tone="warning"
+              className="lg:col-span-5"
+            >
+              <RankedBarList
+                items={buildMultiBreakdown(
+                  validResponses,
+                  'A4_1',
+                  'A4.1. Lý do chênh lệch chi tiêu',
+                  A4_1_OPTIONS
+                )}
+                barHex="#f59e0b"
+              />
+            </SectionCard>
+          </div>
+
+          {/* A5: Ma trận Loại hình dịch vụ × Mức chi tiêu */}
+          <SectionCard
+            code="A5"
+            title="Ma trận mức chi tiêu bình quân/người theo từng loại hình dịch vụ F&B"
+            meta={`n = ${kpiMetrics.usedFnBCount} phiếu có dùng F&B`}
+            tone="iris"
+            actions={
+              <SegmentedToggle
+                value={a5DisplayMode}
+                onChange={setA5DisplayMode}
+                options={[
+                  { value: 'pct', label: 'Tỷ lệ (%)' },
+                  { value: 'count', label: 'Số phiếu' },
+                ]}
+              />
+            }
+            bodyClassName="p-0"
+          >
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200/80 bg-slate-50/70 text-slate-500 font-medium">
+                    <th className="py-2.5 px-4">Loại hình dịch vụ (A5)</th>
+                    {A5_COLUMNS.map((col) => (
+                      <th key={col.code} className="py-2.5 px-3 text-right tabular-nums">
+                        {col.label}
+                      </th>
+                    ))}
+                    <th className="py-2.5 px-4 text-right tabular-nums">Tổng phiếu</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {A5_ROWS.map((row) => {
+                    const rowKey = row.key as keyof SurveyResponseData['A5'];
+                    const counts = A5_COLUMNS.map((col) => {
+                      const matched = validResponses.filter(
+                        (r) => r.A5?.[rowKey] === col.code
+                      );
+                      return {
+                        colCode: col.code,
+                        colLabel: col.label,
+                        matched,
+                        count: matched.length,
+                      };
+                    });
+                    const rowTotal = counts.reduce((s, c) => s + c.count, 0);
+                    return (
+                      <tr key={row.key} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-2.5 px-4 font-medium text-slate-800">{row.label}</td>
+                        {counts.map((cell) => {
+                          const pct =
+                            rowTotal > 0 ? Math.round((cell.count / rowTotal) * 100) : 0;
+                          const intensity =
+                            pct >= 30
+                              ? 'bg-indigo-50 text-indigo-900 font-semibold'
+                              : pct >= 12
+                              ? 'bg-slate-50 text-slate-800 font-medium'
+                              : 'text-slate-400';
+                          return (
+                            <td
+                              key={cell.colCode}
+                              className={`py-2.5 px-3 text-right tabular-nums ${intensity}`}
+                            >
+                              {cell.count > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDrilldown({
+                                      title: `A5: ${row.label} — ${cell.colLabel}`,
+                                      subtitle: `${cell.count} phiếu ghi nhận`,
+                                      items: cell.matched,
+                                    })
+                                  }
+                                  className="hover:text-[#d12f2f] hover:underline cursor-pointer"
+                                >
+                                  {a5DisplayMode === 'pct' ? `${pct}%` : cell.count}
+                                </button>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="py-2.5 px-4 text-right font-semibold tabular-nums text-slate-900">
+                          {rowTotal}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+
+          {/* A6, A7, A8 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <SectionCard
+              code="A6"
+              title="Độ phủ thực đơn đáp ứng nhu cầu"
+              meta={`n = ${kpiMetrics.usedFnBCount}`}
+              tone="ocean"
+            >
+              <ProportionBreakdown
+                items={buildSingleBreakdown(
+                  validResponses,
+                  'A6',
+                  'A6. Đánh giá thực đơn',
+                  A6_OPTIONS
+                )}
+                showCodePrefix
+              />
+            </SectionCard>
+
+            <SectionCard
+              code="A7"
+              title="Thời gian chờ & tốc độ phục vụ"
+              meta={`n = ${kpiMetrics.usedFnBCount}`}
+              tone="success"
+            >
+              <ProportionBreakdown
+                items={buildSingleBreakdown(
+                  validResponses,
+                  'A7',
+                  'A7. Tốc độ phục vụ',
+                  A7_OPTIONS
+                )}
+                showCodePrefix
+              />
+            </SectionCard>
+
+            <SectionCard
+              code="A8"
+              title="Khung giờ phát sinh nhu cầu ăn uống"
+              meta="Chọn nhiều"
+              tone="iris"
+            >
+              <RankedBarList
+                items={buildMultiBreakdown(
+                  validResponses,
+                  'A8',
+                  'A8. Khung giờ ăn uống',
+                  A8_OPTIONS
+                )}
+                barHex="#6366f1"
+              />
+            </SectionCard>
+          </div>
+        </div>
+      )}
+
+      {/* ==========================================================================
+          TAB 3: THỊ HIẾU & KHẨU VỊ ẨM THỰC (PHẦN B)
+         ========================================================================== */}
+      {activeSubTab === 'preferences' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <SectionCard
+              code="B1"
+              title="Nhóm ẩm thực ưu tiên tại khu du lịch"
+              meta={`Tối đa 2 lựa chọn · n = ${validResponses.length}`}
+              tone="brand"
+            >
+              <RankedBarList
+                items={buildMultiBreakdown(
+                  validResponses,
+                  'B1',
+                  'B1. Nhóm ẩm thực',
+                  B1_OPTIONS
+                )}
+                barHex="#d12f2f"
+              />
+            </SectionCard>
+
+            <SectionCard
+              code="B2"
+              title="Phong cách chế biến món ăn ưa chuộng"
+              meta={`Tối đa 2 lựa chọn · n = ${validResponses.length}`}
+              tone="ocean"
+            >
+              <RankedBarList
+                items={buildMultiBreakdown(
+                  validResponses,
+                  'B2',
+                  'B2. Cách chế biến',
+                  B2_OPTIONS
+                )}
+                barHex="#0891b2"
+              />
+            </SectionCard>
+          </div>
+
+          {/* B3.1, B3.2, B3.3: Khẩu vị chế biến (Độ cay, Độ đậm vị, Nhiệt độ món) */}
+          <SectionCard
+            code="B3.1 · B3.2 · B3.3"
+            title="Khẩu vị chế biến món ăn ưu tiên (Độ cay · Độ đậm vị · Nhiệt độ)"
+            meta={`n = ${validResponses.length}`}
+            tone="iris"
+            actions={
+              <SegmentedToggle
+                value={b3TierTab}
+                onChange={setB3TierTab}
+                options={[
+                  { value: 'B3_1', label: 'B3.1. Độ cay' },
+                  { value: 'B3_2', label: 'B3.2. Độ đậm vị' },
+                  { value: 'B3_3', label: 'B3.3. Nhiệt độ món' },
+                ]}
+              />
+            }
+          >
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {(
+                [
+                  {
+                    key: 'B3_1' as const,
+                    code: 'B3.1',
+                    title: 'Khẩu vị độ cay',
+                    opts: B3_1_OPTIONS,
+                  },
+                  {
+                    key: 'B3_2' as const,
+                    code: 'B3.2',
+                    title: 'Khẩu vị độ đậm nhạt',
+                    opts: B3_2_OPTIONS,
+                  },
+                  {
+                    key: 'B3_3' as const,
+                    code: 'B3.3',
+                    title: 'Nhiệt độ món ăn ưu tiên',
+                    opts: B3_3_OPTIONS,
+                  },
+                ]
+              ).map((tier) => {
+                const isFocused = b3TierTab === tier.key;
+                return (
+                  <div
+                    key={tier.key}
+                    className={`rounded-lg border p-3 transition-colors ${
+                      isFocused
+                        ? 'border-slate-300 bg-slate-50/70'
+                        : 'border-slate-200/70 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2.5">
+                      <span className="text-xs font-semibold text-slate-900">
+                        {tier.code} · {tier.title}
+                      </span>
+                    </div>
+                    <ProportionBreakdown
+                      items={buildSingleBreakdown(
+                        validResponses,
+                        tier.key,
+                        tier.title,
+                        tier.opts
+                      )}
+                      showCodePrefix
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </SectionCard>
+
+          {/* B4: Mức giá hợp lý sẵn sàng chi trả theo 5 nhóm sản phẩm */}
+          <SectionCard
+            code="B4"
+            title="Mức giá hợp lý du khách sẵn sàng chi trả theo từng nhóm sản phẩm F&B"
+            meta={`n = ${validResponses.length}`}
+            tone="warning"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {B4_ROWS.map((row) => {
+                const total = validResponses.filter(
+                  (r) => r.B4?.[row.key] !== null && r.B4?.[row.key] !== undefined
+                ).length;
+                const items: BreakdownItem[] = row.options.map((opt, idx) => {
+                  const matched = validResponses.filter((r) => r.B4?.[row.key] === opt.code);
+                  const count = matched.length;
+                  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                  return {
+                    code: opt.code,
+                    label: opt.label,
+                    count,
+                    pct,
+                    colorHex: CATEGORICAL_HEX[idx % CATEGORICAL_HEX.length],
+                    onInspect:
+                      count > 0
+                        ? () =>
+                            setDrilldown({
+                              title: `B4 (${row.label}): ${opt.label}`,
+                              subtitle: `${count} phiếu lựa chọn`,
+                              items: matched,
+                            })
+                        : undefined,
+                  };
+                });
+
+                return (
+                  <div
+                    key={row.key}
+                    className="rounded-lg border border-slate-200/80 bg-white p-3.5"
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-2.5">
+                      <span className="text-xs font-semibold text-slate-900">{row.label}</span>
+                      <span className="text-[11px] text-slate-400 tabular-nums">
+                        n = {total}
+                      </span>
+                    </div>
+                    <ProportionBreakdown items={items} showCodePrefix />
+                  </div>
+                );
+              })}
+            </div>
+          </SectionCard>
+        </div>
+      )}
+
+      {/* ==========================================================================
+          TAB 4: ĐÁNH GIÁ SERVQUAL (B5) & KỲ VỌNG CẢI THIỆN (PHẦN C)
+         ========================================================================== */}
+      {activeSubTab === 'expectations' && (
+        <div className="space-y-4">
+          {/* B5: Ma trận Likert 5 mức chuẩn IAS */}
+          {renderLikertTableSection(
+            'B5',
+            config.questions.B5?.title ||
+              'Đánh giá tầm quan trọng của các yếu tố dịch vụ F&B (Khung SERVQUAL)',
+            true
+          )}
+
+          {/* Các câu hỏi Likert do Admin thêm mới (ngoài B5) */}
+          {allConfiguredQuestions
+            .filter((q) => q.type === 'likert' && q.key !== 'B5')
+            .map((q) => renderLikertTableSection(q.key, q.title, false))}
+
+          {/* C1, C2, C3 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <SectionCard
+              code="C1"
+              title="Yếu tố kỳ vọng cải thiện nhất"
+              meta="Chọn tối đa 2"
+              tone="brand"
+            >
+              <RankedBarList
+                items={buildMultiBreakdown(
+                  validResponses,
+                  'C1',
+                  'C1. Kỳ vọng cải thiện',
+                  C1_OPTIONS
+                )}
+                barHex="#d12f2f"
+              />
+            </SectionCard>
+
+            <SectionCard
+              code="C2"
+              title="Dịch vụ ẩm thực mong muốn bổ sung"
+              meta="Chọn nhiều"
+              tone="ocean"
+            >
+              <RankedBarList
+                items={buildMultiBreakdown(
+                  validResponses,
+                  'C2',
+                  'C2. Dịch vụ muốn bổ sung',
+                  C2_OPTIONS
+                )}
+                barHex="#0891b2"
+              />
+            </SectionCard>
+
+            <SectionCard
+              code="C3"
+              title="Mức sẵn sàng chi trả thêm (WTP)"
+              meta={`n = ${validResponses.length}`}
+              tone="success"
+            >
+              <ProportionBreakdown
+                items={buildSingleBreakdown(
+                  validResponses,
+                  'C3',
+                  'C3. Sẵn sàng chi trả thêm',
+                  C3_OPTIONS
+                )}
+                showCodePrefix
+              />
+            </SectionCard>
+          </div>
+
+          {/* Ý kiến mở (C4 & tự luận) dạng bảng gọn chuẩn IAS */}
+          <SectionCard
+            code="C4 · Tự luận"
+            title="Tổng hợp ý kiến đóng góp & câu trả lời tự luận của du khách"
+            meta={`${openVerbatims.length} ghi nhận`}
+            tone="neutral"
+            actions={
+              <select
+                value={verbatimFilterTag}
+                onChange={(e) => setVerbatimFilterTag(e.target.value)}
+                className="h-7 px-2 rounded-md border border-slate-200 bg-white text-xs text-slate-700"
+              >
+                <option value="ALL">Tất cả nhóm ý kiến ({openVerbatims.length})</option>
+                <option value="C4. Đề xuất chung">C4. Đề xuất chung</option>
+                <option value="A3.1. Nơi đã ăn trước">A3.1. Nơi đã ăn trước</option>
+                <option value="A3.2. Mức giá hợp lý">A3.2. Mức giá hợp lý</option>
+                <option value="A3.3. Món mong muốn">A3.3. Món mong muốn</option>
+              </select>
+            }
+            bodyClassName="p-0"
+          >
+            {openVerbatims.length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-400">
+                Chưa có ý kiến đóng góp tự luận nào trong tập dữ liệu đang lọc.
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-80">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="sticky top-0 bg-slate-50 border-b border-slate-200/80 text-slate-500 font-medium">
+                    <tr>
+                      <th className="py-2 px-4 w-28">Mã phiếu</th>
+                      <th className="py-2 px-3 w-28">Ngày</th>
+                      <th className="py-2 px-3 w-40">Điểm khảo sát</th>
+                      <th className="py-2 px-3 w-44">Câu hỏi</th>
+                      <th className="py-2 px-4">Nội dung phản hồi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {openVerbatims
+                      .filter(
+                        (v) => verbatimFilterTag === 'ALL' || v.tag === verbatimFilterTag
+                      )
+                      .slice(0, 60)
+                      .map((item, idx) => (
                         <tr
-                          key={idx}
-                          className={
-                            row.highlight
-                              ? 'bg-red-50/70 font-bold text-slate-900'
-                              : 'hover:bg-slate-50 text-slate-700'
+                          key={`${item.surveyCode}-${idx}`}
+                          onClick={() =>
+                            setDrilldown({
+                              title: `Phiếu ${item.surveyCode}`,
+                              subtitle: `${item.locationName} · ${item.date}`,
+                              items: [item.response],
+                            })
                           }
+                          className="hover:bg-slate-50 cursor-pointer transition-colors"
                         >
-                          <td className="py-2.5 px-3 font-semibold">{row.group}</td>
-                          <td className="py-2.5 px-3 text-right tabular-nums font-bold">
-                            {m.count}
+                          <td className="py-2 px-4 font-mono text-[11px] font-semibold text-slate-800 whitespace-nowrap">
+                            {item.surveyCode}
                           </td>
-                          <td className="py-2.5 px-3 text-right tabular-nums">
-                            <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold">
-                              {m.fnbPct}%
+                          <td className="py-2 px-3 tabular-nums text-slate-500 whitespace-nowrap">
+                            {item.date}
+                          </td>
+                          <td className="py-2 px-3 text-slate-600 truncate max-w-[160px]">
+                            {item.locationName}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className="inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-700 border border-slate-200/80">
+                              {item.tag}
                             </span>
                           </td>
+                          <td className="py-2 px-4 text-slate-800">{item.text}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </SectionCard>
+        </div>
+      )}
+
+      {/* ==========================================================================
+          TAB 5: PHÂN TÁCH ĐA CHIỀU (CROSS-TABULATION) & TRA CỨU TOÀN BỘ CÂU HỎI
+         ========================================================================== */}
+      {activeSubTab === 'crosstab' && (
+        <div className="space-y-4">
+          {/* Bảng Cross-Tabulation chuẩn AssetBreakdown.tsx */}
+          <SectionCard
+            title="Bảng phân tách chỉ số F&B theo chiều phân khúc"
+            meta={`n = ${validResponses.length} phiếu hợp lệ`}
+            tone="ocean"
+            actions={
+              <SegmentedToggle
+                value={crossTabDim}
+                onChange={setCrossTabDim}
+                options={[
+                  { value: 'market_group', label: 'Nội địa / Quốc tế' },
+                  { value: 's5_detail', label: 'Quốc tịch (S5)' },
+                  { value: 's7_mode', label: 'FIT / Tour (S7)' },
+                  { value: 's9_ticket', label: 'Gói vé (S9)' },
+                  { value: 's4_age', label: 'Độ tuổi (S4)' },
+                  { value: 'location', label: 'Điểm khảo sát' },
+                ]}
+              />
+            }
+            bodyClassName="p-0"
+          >
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200/80 bg-slate-50/70 text-slate-500 font-medium">
+                    <th className="py-2.5 px-4">Nhóm phân khúc</th>
+                    <th className="py-2.5 px-3 text-right tabular-nums">Số phiếu (n)</th>
+                    <th className="py-2.5 px-3 text-right tabular-nums">Tỷ lệ dùng F&amp;B</th>
+                    <th className="py-2.5 px-3 text-right tabular-nums">Dự kiến TB (A1)</th>
+                    <th className="py-2.5 px-3 text-right tabular-nums">Thực tế TB (A4)</th>
+                    <th className="py-2.5 px-3 text-right tabular-nums">SERVQUAL TB (B5)</th>
+                    <th className="py-2.5 px-4 text-right tabular-nums">Buffet cao (B4)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(() => {
+                    let groups: { label: string; subset: SurveyResponseData[] }[] = [];
+                    if (crossTabDim === 'market_group') {
+                      groups = [
+                        {
+                          label: 'Khách Nội địa (S5 = 1..4)',
+                          subset: validResponses.filter((r) => {
+                            const s5 = getSingleAnswer(r, 'S5');
+                            return s5 !== null && s5 >= 1 && s5 <= 4;
+                          }),
+                        },
+                        {
+                          label: 'Khách Quốc tế (S5 ≥ 5)',
+                          subset: validResponses.filter((r) => {
+                            const s5 = getSingleAnswer(r, 'S5');
+                            return s5 !== null && s5 >= 5;
+                          }),
+                        },
+                      ];
+                    } else if (crossTabDim === 's5_detail') {
+                      groups = qOpts('S5', S5_OPTIONS).map((o) => ({
+                        label: `${o.code}. ${o.label}`,
+                        subset: validResponses.filter((r) => getSingleAnswer(r, 'S5') === o.code),
+                      }));
+                    } else if (crossTabDim === 's7_mode') {
+                      groups = qOpts('S7', S7_OPTIONS).map((o) => ({
+                        label: `${o.code}. ${o.label}`,
+                        subset: validResponses.filter((r) => getSingleAnswer(r, 'S7') === o.code),
+                      }));
+                    } else if (crossTabDim === 's9_ticket') {
+                      groups = qOpts('S9', S9_OPTIONS).map((o) => ({
+                        label: `${o.code}. ${o.label}`,
+                        subset: validResponses.filter((r) => getSingleAnswer(r, 'S9') === o.code),
+                      }));
+                    } else if (crossTabDim === 's4_age') {
+                      groups = qOpts('S4', S4_OPTIONS).map((o) => ({
+                        label: `${o.code}. ${o.label}`,
+                        subset: validResponses.filter((r) => getSingleAnswer(r, 'S4') === o.code),
+                      }));
+                    } else if (crossTabDim === 'location') {
+                      groups = config.locations.map((loc) => ({
+                        label: loc.name,
+                        subset: validResponses.filter((r) => r.locationId === loc.id),
+                      }));
+                    }
+
+                    return groups.map((g, idx) => {
+                      const m = computeSubsetMetrics(g.subset);
+                      const sharePct =
+                        validResponses.length > 0
+                          ? Math.round((m.count / validResponses.length) * 100)
+                          : 0;
+                      return (
+                        <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-2.5 px-4 font-medium text-slate-800">{g.label}</td>
                           <td className="py-2.5 px-3 text-right tabular-nums">
-                            {m.avgA1 > 0 ? `${m.avgA1.toLocaleString('vi-VN')}đ` : '—'}
+                            {m.count > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDrilldown({
+                                    title: `Phân khúc: ${g.label}`,
+                                    subtitle: `${m.count} phiếu hợp lệ`,
+                                    items: g.subset,
+                                  })
+                                }
+                                className="font-semibold text-slate-900 hover:text-[#d12f2f] hover:underline cursor-pointer"
+                              >
+                                {m.count}
+                              </button>
+                            ) : (
+                              <span className="text-slate-400">0</span>
+                            )}{' '}
+                            <span className="text-slate-400">({sharePct}%)</span>
                           </td>
-                          <td className="py-2.5 px-3 text-right tabular-nums font-bold text-emerald-700">
-                            {m.avgA4 > 0 ? `${m.avgA4.toLocaleString('vi-VN')}đ` : '—'}
+                          <td className="py-2.5 px-3 text-right font-semibold tabular-nums text-emerald-700">
+                            {m.count > 0 ? `${m.fnbPct}%` : '—'}
                           </td>
-                          <td className="py-2.5 px-3 text-right tabular-nums">
-                            <span className="text-rose-600 font-semibold">
-                              {m.buffetExpensivePct}%
+                          <td className="py-2.5 px-3 text-right tabular-nums text-slate-700">
+                            {m.avgA1 > 0 ? `~${m.avgA1}k` : '—'}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-semibold tabular-nums text-[#d12f2f]">
+                            {m.avgA4 > 0 ? `~${m.avgA4}k` : '—'}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-semibold tabular-nums text-slate-900">
+                            {m.b5Mean > 0 ? m.b5Mean.toFixed(2) : '—'}
+                          </td>
+                          <td className="py-2.5 px-4 text-right tabular-nums text-rose-600">
+                            {m.count > 0 ? `${m.buffetExpensivePct}%` : '—'}
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+
+          {/* Tra cứu toàn bộ câu hỏi khảo sát (kể cả câu hỏi mới do Admin thêm) */}
+          <SectionCard
+            title="Danh mục thống kê chi tiết toàn bộ câu hỏi khảo sát"
+            meta={`${allConfiguredQuestions.length} câu hỏi`}
+            tone="iris"
+            actions={
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={explorerSearch}
+                    onChange={(e) => setExplorerSearch(e.target.value)}
+                    placeholder="Tìm mã hoặc nội dung câu hỏi..."
+                    className="h-7 pl-8 pr-2.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-slate-400"
+                  />
+                </div>
+                <SegmentedToggle
+                  value={explorerSection}
+                  onChange={setExplorerSection}
+                  options={[
+                    { value: 'ALL', label: 'Tất cả' },
+                    { value: 'S', label: 'Phần S' },
+                    { value: 'A', label: 'Phần A' },
+                    { value: 'B', label: 'Phần B' },
+                    { value: 'C', label: 'Phần C' },
+                  ]}
+                />
+              </div>
+            }
+          >
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {allConfiguredQuestions
+                .filter((q) => {
+                  if (
+                    explorerSection !== 'ALL' &&
+                    q.section !== (`PHẦN ${explorerSection}` as const)
+                  ) {
+                    return false;
+                  }
+                  if (explorerSearch.trim()) {
+                    const kw = explorerSearch.toLowerCase();
+                    if (
+                      !q.key.toLowerCase().includes(kw) &&
+                      !q.title.toLowerCase().includes(kw)
+                    ) {
+                      return false;
+                    }
+                  }
+                  return true;
+                })
+                .map((q) => {
+                  if (q.type === 'likert') {
+                    const { rows } = computeLikertMatrixStats(validResponses, q.key);
+                    return (
+                      <div
+                        key={q.key}
+                        className="lg:col-span-2 rounded-lg border border-slate-200/80 p-3.5 bg-slate-50/40"
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded bg-white px-1.5 py-0.5 font-mono text-[11px] font-medium text-slate-700 border border-slate-200">
+                              {q.key}
                             </span>
+                            <span className="text-xs font-semibold text-slate-900">
+                              {q.title}
+                            </span>
+                          </div>
+                          <span className="text-xs text-slate-500">
+                            Thang Likert 5 mức ({rows.length} dòng)
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                          {rows.map((r) => (
+                            <div
+                              key={r.code}
+                              className="rounded-lg border border-slate-200/80 bg-white p-2.5 flex items-center justify-between gap-2 text-xs"
+                            >
+                              <div className="min-w-0">
+                                <span className="font-mono text-[11px] text-slate-400 mr-1">
+                                  {r.displayCode}
+                                </span>
+                                <span className="font-medium text-slate-700 truncate block">
+                                  {r.label}
+                                </span>
+                              </div>
+                              <div className="text-right shrink-0 tabular-nums">
+                                <div className="font-semibold text-slate-900">
+                                  TB: {r.mean.toFixed(2)}
+                                </div>
+                                <div className="text-[11px] text-emerald-700">
+                                  Mức 4+5: {r.top2Pct}%
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (q.type === 'text') {
+                    const texts = validResponses
+                      .map((r) => ({
+                        code: r.surveyCode,
+                        txt: getTextAnswer(r, q.key).trim(),
+                      }))
+                      .filter((x) => Boolean(x.txt));
+                    return (
+                      <div
+                        key={q.key}
+                        className="rounded-lg border border-slate-200/80 p-3.5 bg-white"
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-slate-700">
+                              {q.key}
+                            </span>
+                            <span className="text-xs font-semibold text-slate-900 truncate">
+                              {q.title}
+                            </span>
+                          </div>
+                          <span className="text-xs text-slate-500 shrink-0 tabular-nums">
+                            {texts.length} phản hồi
+                          </span>
+                        </div>
+                        {texts.length === 0 ? (
+                          <div className="text-xs text-slate-400 py-3">
+                            Chưa có câu trả lời tự luận
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5 max-h-40 overflow-y-auto text-xs">
+                            {texts.slice(0, 12).map((item, i) => (
+                              <div
+                                key={i}
+                                className="flex items-baseline gap-2 py-1 border-b border-slate-100 last:border-b-0"
+                              >
+                                <span className="font-mono text-[11px] text-slate-400 shrink-0">
+                                  {item.code}:
+                                </span>
+                                <span className="text-slate-700">{item.txt}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  if (q.key === 'A5' || q.key === 'B4') {
+                    return null;
+                  }
+
+                  const items =
+                    q.type === 'multi'
+                      ? buildMultiBreakdown(validResponses, q.key, q.title, q.options, true)
+                      : buildSingleBreakdown(validResponses, q.key, q.title, q.options, false);
+
+                  return (
+                    <div
+                      key={q.key}
+                      className="rounded-lg border border-slate-200/80 p-3.5 bg-white"
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-2.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-slate-700 shrink-0">
+                            {q.key}
+                          </span>
+                          <span
+                            className="text-xs font-semibold text-slate-900 truncate"
+                            title={q.title}
+                          >
+                            {q.title}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-400 shrink-0">
+                          {q.type === 'multi' ? 'Chọn nhiều' : 'Chọn 1'}
+                        </span>
+                      </div>
+                      <ProportionBreakdown items={items} showCodePrefix />
+                    </div>
+                  );
+                })}
+            </div>
+          </SectionCard>
+        </div>
+      )}
+
+      {/* ==========================================================================
+          DRILLDOWN MODAL (Chuẩn Reports.tsx trong PKT_Payment)
+         ========================================================================== */}
+      <AnimatePresence>
+        {drilldown && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-[1px] p-4"
+            onClick={() => setDrilldown(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={{ duration: 0.15 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-4xl w-full max-h-[82vh] flex flex-col overflow-hidden"
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200/80 bg-slate-100/80 px-4 py-3">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-slate-900 truncate">
+                    {drilldown.title}
+                  </h3>
+                  {drilldown.subtitle && (
+                    <p className="text-xs text-slate-500 mt-0.5 tabular-nums">
+                      {drilldown.subtitle}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {canExport && drilldown.items.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => exportResponsesToCsv(drilldown.items, exportOptions)}
+                        className="h-7 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download className="h-3 w-3" />
+                        CSV ({drilldown.items.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => exportResponsesToExcel(drilldown.items, exportOptions)}
+                        className="h-7 px-2.5 rounded-lg bg-[#d12f2f] hover:bg-[#b82626] text-xs font-medium text-white inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <FileSpreadsheet className="h-3 w-3" />
+                        Excel ({drilldown.items.length})
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setDrilldown(null)}
+                    className="h-7 w-7 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-500 cursor-pointer"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="sticky top-0 bg-slate-50 border-b border-slate-200/80 text-slate-500 font-medium">
+                    <tr>
+                      <th className="py-2.5 px-4">Mã phiếu</th>
+                      <th className="py-2.5 px-3">Thời gian</th>
+                      <th className="py-2.5 px-3">Điểm khảo sát &amp; PVV</th>
+                      <th className="py-2.5 px-3">Thị trường (S5)</th>
+                      <th className="py-2.5 px-3">Hình thức (S7)</th>
+                      <th className="py-2.5 px-4 text-right">Dự kiến (A1) / Thực tế (A4)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {drilldown.items.map((r) => {
+                      const locName =
+                        config.locations.find((l) => l.id === r.locationId)?.name ||
+                        `Điểm #${r.locationId}`;
+                      const s5Label =
+                        qOpts('S5', S5_OPTIONS).find((o) => o.code === r.S5)?.label || '—';
+                      const s7Label =
+                        qOpts('S7', S7_OPTIONS).find((o) => o.code === r.S7)?.label || '—';
+                      const a1Label =
+                        qOpts('A1', A1_OPTIONS).find((o) => o.code === r.A1)?.label || '—';
+                      const a4Label = r.A2.includes(7)
+                        ? 'Chưa dùng F&B'
+                        : qOpts('A4', A4_OPTIONS).find((o) => o.code === r.A4)?.label || '—';
+
+                      return (
+                        <tr key={r.id} className="hover:bg-slate-50/80">
+                          <td className="py-2 px-4 font-mono text-[11px] font-semibold text-slate-900 whitespace-nowrap">
+                            {r.surveyCode}
                           </td>
-                          <td className="py-2.5 px-3 text-right tabular-nums font-black text-amber-700">
-                            {m.b5Mean > 0 ? `${m.b5Mean.toFixed(2)} / 5.0` : '—'}
+                          <td className="py-2 px-3 tabular-nums text-slate-500 whitespace-nowrap">
+                            {r.surveyDate} · {r.startTime?.slice(0, 5)}
+                          </td>
+                          <td className="py-2 px-3">
+                            <div className="font-medium text-slate-800">{locName}</div>
+                            <div className="text-[11px] text-slate-400">{r.interviewerName}</div>
+                          </td>
+                          <td className="py-2 px-3 text-slate-700">{s5Label}</td>
+                          <td className="py-2 px-3 text-slate-600">{s7Label}</td>
+                          <td className="py-2 px-4 text-right tabular-nums">
+                            <div className="text-slate-600">A1: {a1Label}</div>
+                            <div className="font-medium text-slate-900">A4: {a4Label}</div>
                           </td>
                         </tr>
                       );
@@ -2567,156 +2708,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                 </table>
               </div>
             </motion.div>
-          )}
-
-          {/* ======================================================================
-              SECTION 6: FULL QUESTION-BY-QUESTION DYNAMIC EXPLORER (100% QUESTIONS)
-             ====================================================================== */}
-          {(activeSubTab === 'all' || activeSubTab === 'explorer') && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-4"
-            >
-              <div className="bg-white rounded-2xl p-4 border border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Compass className="w-4 h-4 text-[#d12f2f]" />
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Trình Khám Phá Tự Động 100% Câu Hỏi Trong Cấu Hình ({allConfiguredQuestions.length} câu)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Hiển thị biểu đồ chi tiết cho mọi câu hỏi gốc, câu hỏi con và câu hỏi mới do
-                      Admin thêm vào
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1">
-                  {['ALL', 'PHẦN S', 'PHẦN A', 'PHẦN B', 'PHẦN C'].map((sec) => (
-                    <button
-                      key={sec}
-                      type="button"
-                      onClick={() => setExplorerSectionFilter(sec)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition ${
-                        explorerSectionFilter === sec
-                          ? 'bg-[#d12f2f] text-white'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      {sec === 'ALL' ? 'Tất cả Phần' : sec}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {allConfiguredQuestions
-                  .filter(
-                    (q) =>
-                      explorerSectionFilter === 'ALL' || q.section === explorerSectionFilter
-                  )
-                  .map((q) => {
-                    if (q.type === 'likert') {
-                      return (
-                        <div key={q.key} className="lg:col-span-2">
-                          {renderLikertMatrixChart(
-                            q.key,
-                            q.title,
-                            `Thuộc ${q.section} • Bảng đánh giá Likert 5 mức độ`
-                          )}
-                        </div>
-                      );
-                    }
-
-                    if (q.type === 'single' || q.type === 'multi') {
-                      const dist =
-                        q.type === 'single'
-                          ? computeSingleDistribution(validResponses, q.key, q.options)
-                          : computeMultiDistribution(validResponses, q.key, q.options);
-                      const answeredCount = dist[0]?.totalAnswered ?? 0;
-
-                      return (
-                        <div
-                          key={q.key}
-                          className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <span className="inline-block px-2 py-0.5 rounded bg-slate-100 font-mono text-[11px] font-bold text-slate-700 mr-1.5">
-                                {q.key} • {q.section}
-                              </span>
-                              <span className="text-xs font-bold text-slate-900">{q.title}</span>
-                            </div>
-                            <span className="text-[11px] font-semibold text-slate-400 shrink-0">
-                              N = {answeredCount}
-                            </span>
-                          </div>
-                          {renderAnimatedHorizontalBars(
-                            dist,
-                            q.section === 'PHẦN S'
-                              ? 'bg-indigo-600'
-                              : q.section === 'PHẦN A'
-                              ? 'bg-[#d12f2f]'
-                              : q.section === 'PHẦN B'
-                              ? 'bg-emerald-600'
-                              : 'bg-purple-600'
-                          )}
-                        </div>
-                      );
-                    }
-
-                    // Câu hỏi tự luận (text)
-                    const texts = validResponses
-                      .map((r) => ({
-                        code: r.surveyCode,
-                        txt: getTextAnswer(r, q.key).trim(),
-                      }))
-                      .filter((x) => Boolean(x.txt));
-
-                    return (
-                      <div
-                        key={q.key}
-                        className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-2.5"
-                      >
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-bold text-slate-900">
-                            <span className="px-1.5 py-0.5 rounded bg-slate-100 font-mono mr-1.5">
-                              {q.key}
-                            </span>
-                            {q.title}
-                          </h4>
-                          <span className="text-[11px] font-semibold text-slate-400">
-                            {texts.length} câu trả lời
-                          </span>
-                        </div>
-                        {texts.length === 0 ? (
-                          <div className="text-xs text-slate-400 italic py-2">
-                            Chưa có câu trả lời tự luận cho câu hỏi này.
-                          </div>
-                        ) : (
-                          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                            {texts.map((item, idx) => (
-                              <div
-                                key={idx}
-                                className="p-2 rounded-xl bg-slate-50 border border-slate-200 text-xs"
-                              >
-                                <span className="font-mono font-bold text-[#d12f2f] mr-1.5">
-                                  [{item.code}]
-                                </span>
-                                <span className="text-slate-800">{item.txt}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-              </div>
-            </motion.div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
