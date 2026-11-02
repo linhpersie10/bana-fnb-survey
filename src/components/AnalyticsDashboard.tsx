@@ -19,6 +19,10 @@ import {
   AlertCircle,
   Sparkles,
   Clock,
+  Table2,
+  Compass,
+  Award,
+  Calendar,
 } from 'lucide-react';
 import {
   SurveyResponseData,
@@ -66,7 +70,6 @@ import {
 } from '../data/surveySchema';
 import {
   SurveySystemConfig,
-  DEFAULT_QUESTION_ORDER,
   getLikertScaleLabels,
 } from '../services/surveyConfig';
 
@@ -79,7 +82,14 @@ interface AnalyticsDashboardProps {
   onClearPilotSamples?: () => void;
 }
 
-type DashboardViewTab = 'all' | 'overview' | 'spending' | 'preferences' | 'expectations';
+type DashboardViewTab =
+  | 'all'
+  | 'overview'
+  | 'spending'
+  | 'preferences'
+  | 'expectations'
+  | 'crosstab'
+  | 'explorer';
 
 // Trọng số điểm giữa (Midpoint VNĐ) của các khoảng chi tiêu A1 & A4 để ước tính mức chi bình quân
 const SPEND_TIER_MIDPOINTS: Record<number, number> = {
@@ -108,6 +118,250 @@ const LIKERT_TEXT_COLORS = [
   'text-emerald-700',
 ];
 
+const DONUT_PALETTE = [
+  '#d12f2f',
+  '#0284c7',
+  '#059669',
+  '#d97706',
+  '#7c3aed',
+  '#db2777',
+  '#4f46e5',
+  '#0d9488',
+  '#ea580c',
+  '#475569',
+];
+
+interface DonutSlice {
+  id: string;
+  label: string;
+  count: number;
+  pct: number;
+  color: string;
+  isSelected?: boolean;
+  onClick?: () => void;
+}
+
+/**
+ * Biểu đồ Donut SVG tương tác có chuyển động mượt (`motion.circle`) khi lọc dữ liệu
+ */
+const InteractiveDonutChart: React.FC<{
+  slices: DonutSlice[];
+  centerValue: string;
+  centerLabel: string;
+}> = ({ slices, centerValue, centerLabel }) => {
+  const size = 164;
+  const strokeWidth = 24;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const total = slices.reduce((acc, s) => acc + s.count, 0);
+
+  let cumulativeFraction = 0;
+
+  return (
+    <div className="flex flex-col sm:flex-row items-center gap-4">
+      <div className="relative shrink-0" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="-rotate-90">
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="transparent"
+            stroke="#f1f5f9"
+            strokeWidth={strokeWidth}
+          />
+          {total > 0 &&
+            slices.map((slice) => {
+              const fraction = slice.count / total;
+              const dashLength = fraction * circumference;
+              const dashOffset = -cumulativeFraction * circumference;
+              cumulativeFraction += fraction;
+              if (slice.count === 0) return null;
+              return (
+                <motion.circle
+                  key={slice.id}
+                  cx={size / 2}
+                  cy={size / 2}
+                  r={radius}
+                  fill="transparent"
+                  stroke={slice.color}
+                  strokeWidth={slice.isSelected ? strokeWidth + 4 : strokeWidth}
+                  strokeDasharray={`${dashLength} ${circumference}`}
+                  initial={{ strokeDashoffset: circumference }}
+                  animate={{
+                    strokeDasharray: `${dashLength} ${circumference}`,
+                    strokeDashoffset: dashOffset,
+                  }}
+                  transition={{ type: 'spring', stiffness: 200, damping: 26 }}
+                  onClick={slice.onClick}
+                  className={slice.onClick ? 'cursor-pointer hover:opacity-85 transition-opacity' : ''}
+                >
+                  <title>{`${slice.label}: ${slice.count} phiếu (${slice.pct}%)`}</title>
+                </motion.circle>
+              );
+            })}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-3 pointer-events-none">
+          <motion.span
+            key={centerValue}
+            initial={{ scale: 0.85, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="text-xl font-black text-slate-900 tabular-nums leading-none"
+          >
+            {centerValue}
+          </motion.span>
+          <span className="text-[10px] font-bold text-slate-400 uppercase mt-1 leading-tight">
+            {centerLabel}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 w-full space-y-1.5">
+        {slices.map((slice) => (
+          <div
+            key={slice.id}
+            onClick={slice.onClick}
+            className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl text-xs transition ${
+              slice.onClick ? 'cursor-pointer hover:bg-slate-100/80' : ''
+            } ${
+              slice.isSelected
+                ? 'bg-red-50/70 ring-1 ring-[#d12f2f] font-bold'
+                : 'bg-slate-50/70'
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span
+                className="w-2.5 h-2.5 rounded-full shrink-0"
+                style={{ backgroundColor: slice.color }}
+              />
+              <span className="text-slate-800 truncate">{slice.label}</span>
+            </div>
+            <span className="font-bold text-slate-900 shrink-0 tabular-nums">
+              {slice.count} <span className="text-slate-400 font-semibold">({slice.pct}%)</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Biểu đồ Radar / Mạng nhện SVG động (`motion.polygon`) cho các chiều đánh giá Likert 5 mức (SERVQUAL B5)
+ */
+const ServqualRadarChart: React.FC<{
+  rows: { displayCode: string; label: string; mean: number; top2Pct: number }[];
+}> = ({ rows }) => {
+  const activeRows = rows.slice(0, 8);
+  if (activeRows.length < 3) return null;
+
+  const size = 250;
+  const center = size / 2;
+  const maxRadius = 86;
+  const count = activeRows.length;
+
+  const getPoint = (index: number, valueOutOf5: number) => {
+    const angle = (Math.PI * 2 * index) / count - Math.PI / 2;
+    const r = (Math.max(0, Math.min(5, valueOutOf5)) / 5) * maxRadius;
+    return {
+      x: center + r * Math.cos(angle),
+      y: center + r * Math.sin(angle),
+    };
+  };
+
+  const polygonPoints = activeRows
+    .map((r, i) => {
+      const pt = getPoint(i, r.mean);
+      return `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
+    })
+    .join(' ');
+
+  return (
+    <div className="flex flex-col items-center justify-center">
+      <svg width={size} height={size} className="overflow-visible">
+        {/* Các vòng lưới thang điểm 1..5 */}
+        {[1, 2, 3, 4, 5].map((lvl) => {
+          const ringPts = activeRows
+            .map((_, i) => {
+              const pt = getPoint(i, lvl);
+              return `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
+            })
+            .join(' ');
+          return (
+            <polygon
+              key={lvl}
+              points={ringPts}
+              fill={lvl === 5 ? '#f8fafc' : 'none'}
+              stroke={lvl === 5 ? '#cbd5e1' : '#e2e8f0'}
+              strokeWidth={1}
+              strokeDasharray={lvl < 5 ? '2 2' : undefined}
+            />
+          );
+        })}
+
+        {/* Các trục nối từ tâm ra đỉnh */}
+        {activeRows.map((r, i) => {
+          const outer = getPoint(i, 5);
+          const labelPos = getPoint(i, 6.05);
+          return (
+            <g key={r.displayCode}>
+              <line
+                x1={center}
+                y1={center}
+                x2={outer.x}
+                y2={outer.y}
+                stroke="#cbd5e1"
+                strokeWidth={1}
+              />
+              <text
+                x={labelPos.x}
+                y={labelPos.y}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                className="fill-slate-800 text-[10px] font-bold"
+              >
+                {r.displayCode} ({r.mean.toFixed(2)})
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Đa giác điểm trung bình động */}
+        <motion.polygon
+          initial={{ opacity: 0, scale: 0.5 }}
+          animate={{ opacity: 1, scale: 1, points: polygonPoints }}
+          transition={{ type: 'spring', stiffness: 200, damping: 24 }}
+          points={polygonPoints}
+          fill="rgba(209, 47, 47, 0.20)"
+          stroke="#d12f2f"
+          strokeWidth={2.5}
+        />
+
+        {/* Các nút đỉnh */}
+        {activeRows.map((r, i) => {
+          const pt = getPoint(i, r.mean);
+          return (
+            <motion.circle
+              key={r.displayCode}
+              initial={{ cx: center, cy: center }}
+              animate={{ cx: pt.x, cy: pt.y }}
+              transition={{ type: 'spring', stiffness: 220, damping: 24 }}
+              r={4.5}
+              fill="#d12f2f"
+              stroke="#ffffff"
+              strokeWidth={1.5}
+            >
+              <title>{`${r.displayCode} - ${r.label}: TB ${r.mean.toFixed(2)}/5.0`}</title>
+            </motion.circle>
+          );
+        })}
+      </svg>
+      <div className="text-[11px] text-slate-500 font-medium text-center mt-1">
+        Biểu đồ Radar 5 bậc tự động biến đổi hình học khi lọc phân khúc khách
+      </div>
+    </div>
+  );
+};
+
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   responses,
   config,
@@ -129,6 +383,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   const [ticketFilter, setTicketFilter] = useState<number | 'all'>('all'); // S9
   const [fnbUsageFilter, setFnbUsageFilter] = useState<'all' | 'used' | 'not_used'>('all'); // A2
   const [interviewerFilter, setInterviewerFilter] = useState<string>('all');
+  const [explorerSectionFilter, setExplorerSectionFilter] = useState<string>('ALL');
 
   const qOpts = (qKey: string, fallback: OptionItem[]): OptionItem[] => {
     const cfgOpts = config.questions[qKey]?.options;
@@ -157,6 +412,24 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     setTicketFilter('all');
     setFnbUsageFilter('all');
     setInterviewerFilter('all');
+  };
+
+  const applyQuickDatePreset = (preset: 'all' | 'today' | '7days') => {
+    if (preset === 'all') {
+      setDateFrom('');
+      setDateTo('');
+      return;
+    }
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    if (preset === 'today') {
+      setDateFrom(todayStr);
+      setDateTo(todayStr);
+    } else if (preset === '7days') {
+      const past = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+      setDateFrom(past.toISOString().slice(0, 10));
+      setDateTo(todayStr);
+    }
   };
 
   // Tập dữ liệu khớp các điều kiện lọc (ngoại trừ statusFilter để tính phễu tiếp cận)
@@ -355,6 +628,71 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   // ============================================================================
   // 3. EXECUTIVE KPI & STATISTICAL AGGREGATIONS
   // ============================================================================
+  const computeSubsetMetrics = (subset: SurveyResponseData[]) => {
+    const count = subset.length;
+    const usedFnBList = subset.filter((r) => {
+      const a2 = getMultiAnswer(r, 'A2');
+      return a2.length > 0 && !a2.includes(7);
+    });
+    const fnbPct = count > 0 ? Math.round((usedFnBList.length / count) * 100) : 0;
+
+    const a1Vals = subset
+      .map((r) => getSingleAnswer(r, 'A1'))
+      .filter((c): c is number => c !== null && Boolean(SPEND_TIER_MIDPOINTS[c]));
+    const avgA1 =
+      a1Vals.length > 0
+        ? Math.round(a1Vals.reduce((acc, c) => acc + SPEND_TIER_MIDPOINTS[c], 0) / a1Vals.length)
+        : 0;
+
+    const a4Vals = usedFnBList
+      .map((r) => getSingleAnswer(r, 'A4'))
+      .filter((c): c is number => c !== null && Boolean(SPEND_TIER_MIDPOINTS[c]));
+    const avgA4 =
+      a4Vals.length > 0
+        ? Math.round(a4Vals.reduce((acc, c) => acc + SPEND_TIER_MIDPOINTS[c], 0) / a4Vals.length)
+        : 0;
+
+    const b5Q = config.questions.B5;
+    const b5RowOpts =
+      b5Q?.options && b5Q.options.length > 0
+        ? b5Q.options
+        : B5_ITEMS.map((item, idx) => ({ code: idx + 1 }));
+
+    let b5Sum = 0;
+    let b5Count = 0;
+    let b5Top2 = 0;
+    subset.forEach((r) => {
+      b5RowOpts.forEach((ro, idx) => {
+        const sc = getLikertRowAnswer(r, 'B5', ro.code || idx + 1);
+        if (sc !== null && sc >= 1 && sc <= 5) {
+          b5Sum += sc;
+          b5Count += 1;
+          if (sc >= 4) b5Top2 += 1;
+        }
+      });
+    });
+
+    const b5Mean = b5Count > 0 ? Number((b5Sum / b5Count).toFixed(2)) : 0;
+    const b5Top2Pct = b5Count > 0 ? Math.round((b5Top2 / b5Count) * 100) : 0;
+
+    const buffetExpensiveCount = subset.filter((r) => r.B4?.buffet === 1).length;
+    const buffetTotalRated = subset.filter((r) => r.B4?.buffet !== null && r.B4?.buffet !== undefined).length;
+    const buffetExpensivePct =
+      buffetTotalRated > 0 ? Math.round((buffetExpensiveCount / buffetTotalRated) * 100) : 0;
+
+    return {
+      count,
+      usedFnBCount: usedFnBList.length,
+      notUsedFnBCount: subset.filter((r) => getMultiAnswer(r, 'A2').includes(7)).length,
+      fnbPct,
+      avgA1,
+      avgA4,
+      b5Mean,
+      b5Top2Pct,
+      buffetExpensivePct,
+    };
+  };
+
   const kpiMetrics = useMemo(() => {
     const totalApproached = baseContextResponses.length;
     const completedCount = baseContextResponses.filter((r) => r.status === 'completed').length;
@@ -362,69 +700,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     const completionRate =
       totalApproached > 0 ? Math.round((completedCount / totalApproached) * 100) : 0;
 
-    const usedFnBList = validResponses.filter((r) => {
-      const a2 = getMultiAnswer(r, 'A2');
-      return a2.length > 0 && !a2.includes(7);
-    });
-    const notUsedFnBList = validResponses.filter((r) => getMultiAnswer(r, 'A2').includes(7));
-    const fnbPenetrationRate =
-      validResponses.length > 0
-        ? Math.round((usedFnBList.length / validResponses.length) * 100)
-        : 0;
+    const core = computeSubsetMetrics(validResponses);
 
-    // Ước tính ngân sách dự kiến (A1) & chi thực tế (A4)
-    const a1Values = validResponses
-      .map((r) => getSingleAnswer(r, 'A1'))
-      .filter((c): c is number => c !== null && Boolean(SPEND_TIER_MIDPOINTS[c]));
-    const avgPlannedBudget =
-      a1Values.length > 0
-        ? Math.round(
-            a1Values.reduce((acc, c) => acc + SPEND_TIER_MIDPOINTS[c], 0) / a1Values.length
-          )
-        : 0;
-
-    const a4Values = usedFnBList
-      .map((r) => getSingleAnswer(r, 'A4'))
-      .filter((c): c is number => c !== null && Boolean(SPEND_TIER_MIDPOINTS[c]));
-    const avgActualSpend =
-      a4Values.length > 0
-        ? Math.round(
-            a4Values.reduce((acc, c) => acc + SPEND_TIER_MIDPOINTS[c], 0) / a4Values.length
-          )
-        : 0;
-
-    // Điểm trung bình SERVQUAL B5
-    const b5Question = config.questions.B5;
-    const b5RowOpts =
-      b5Question?.options && b5Question.options.length > 0
-        ? b5Question.options
-        : B5_ITEMS.map((item, idx) => ({
-            code: idx + 1,
-            rowCode: item.code,
-            label: `${item.dimension}: ${item.label}`,
-            en: item.en,
-          }));
-
-    let totalB5Score = 0;
-    let totalB5Ratings = 0;
-    let top2BoxRatings = 0;
-    validResponses.forEach((r) => {
-      b5RowOpts.forEach((ro, idx) => {
-        const sc = getLikertRowAnswer(r, 'B5', ro.code || idx + 1);
-        if (sc !== null && sc >= 1 && sc <= 5) {
-          totalB5Score += sc;
-          totalB5Ratings += 1;
-          if (sc >= 4) top2BoxRatings += 1;
-        }
-      });
-    });
-
-    const b5OverallMean =
-      totalB5Ratings > 0 ? Number((totalB5Score / totalB5Ratings).toFixed(2)) : 0;
-    const b5Top2BoxPct =
-      totalB5Ratings > 0 ? Math.round((top2BoxRatings / totalB5Ratings) * 100) : 0;
-
-    // Cơ cấu Quốc tế & FIT
     const intlCount = validResponses.filter((r) => {
       const s5 = getSingleAnswer(r, 'S5');
       return s5 !== null && s5 >= 5;
@@ -441,13 +718,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
       completedCount,
       screenoutCount,
       completionRate,
-      usedFnBCount: usedFnBList.length,
-      notUsedFnBCount: notUsedFnBList.length,
-      fnbPenetrationRate,
-      avgPlannedBudget,
-      avgActualSpend,
-      b5OverallMean,
-      b5Top2BoxPct,
+      usedFnBCount: core.usedFnBCount,
+      notUsedFnBCount: core.notUsedFnBCount,
+      fnbPenetrationRate: core.fnbPct,
+      avgPlannedBudget: core.avgA1,
+      avgActualSpend: core.avgA4,
+      b5OverallMean: core.b5Mean,
+      b5Top2BoxPct: core.b5Top2Pct,
       intlCount,
       intlPct,
       fitCount,
@@ -493,7 +770,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           label: opt.label,
           count,
           pct,
-          totalRespondents,
+          totalAnswered: totalRespondents,
         };
       })
       .sort((a, b) => b.count - a.count);
@@ -561,11 +838,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     };
   };
 
-  // Các câu hỏi mở rộng do Admin thêm mới
-  const customQuestionsList = useMemo(() => {
-    return config.questionOrder
-      .filter((k) => !DEFAULT_QUESTION_ORDER.includes(k) && config.questions[k] && !config.questions[k].hidden)
-      .map((k) => config.questions[k]);
+  // Danh sách toàn bộ câu hỏi đang bật trong cấu hình
+  const allConfiguredQuestions = useMemo(() => {
+    const keys = [...config.questionOrder];
+    Object.keys(config.questions).forEach((k) => {
+      if (!keys.includes(k)) keys.push(k);
+    });
+    return keys
+      .map((k) => config.questions[k])
+      .filter((q) => Boolean(q) && !q.hidden);
   }, [config]);
 
   // Danh sách các ý kiến mở (C4_note, A3.1..A3.3, và các ô "Khác (ghi rõ)")
@@ -617,7 +898,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           text: r.A3_3.trim(),
         });
       }
-      ['S5', 'A3', 'A6', 'B1', 'C2', 'C3'].forEach((qk) => {
+      Object.keys(config.questions).forEach((qk) => {
         const otherTxt = getOtherInputAnswer(r, qk)?.trim();
         if (otherTxt) {
           items.push({
@@ -631,11 +912,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
       });
     });
 
-    return items.slice(0, 30);
-  }, [validResponses, config.locations]);
+    return items.slice(0, 40);
+  }, [validResponses, config.locations, config.questions]);
 
   // ============================================================================
-  // 4. REUSABLE ANIMATED CHART COMPONENTS
+  // 4. REUSABLE ANIMATED CHART HELPERS
   // ============================================================================
   const renderAnimatedHorizontalBars = (
     items: {
@@ -650,7 +931,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   ) => {
     const maxPct = Math.max(...items.map((i) => i.pct), 1);
     return (
-      <div className="space-y-2.5">
+      <div className="space-y-2">
         {items.map((item) => {
           const relativeWidth = item.pct > 0 ? Math.max((item.pct / maxPct) * 100, 4) : 0;
           return (
@@ -692,7 +973,12 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     );
   };
 
-  const renderLikertMatrixChart = (qKey: string, title: string, subtitle?: string) => {
+  const renderLikertMatrixChart = (
+    qKey: string,
+    title: string,
+    subtitle?: string,
+    includeRadar = false
+  ) => {
     const { scaleLabels, rows } = computeLikertMatrixStats(validResponses, qKey);
     const sortedRows = [...rows].sort((a, b) => b.mean - a.mean);
 
@@ -710,7 +996,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           </div>
 
           {/* Chú giải 5 mức độ Likert */}
-          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
             {scaleLabels.map((lbl, idx) => (
               <span
                 key={idx}
@@ -723,60 +1009,74 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           </div>
         </div>
 
-        <div className="space-y-3">
-          {sortedRows.map((row) => (
-            <div
-              key={row.code}
-              className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-2"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs font-semibold text-slate-900 leading-snug max-w-2xl">
-                  <span className="inline-block px-1.5 py-0.5 rounded bg-slate-900 text-white font-mono text-[10px] font-bold mr-2">
-                    {row.displayCode}
-                  </span>
-                  {row.label}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
-                    Mức 4+5: {row.top2Pct}%
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-black tabular-nums">
-                    TB: {row.mean.toFixed(2)} / 5.0
-                  </span>
-                </div>
-              </div>
-
-              {/* 100% Stacked Animated Bar */}
-              <div className="h-5 w-full bg-slate-200 rounded-lg overflow-hidden flex">
-                {row.pcts.map((pct, sIdx) =>
-                  pct > 0 ? (
-                    <motion.div
-                      key={sIdx}
-                      initial={{ width: 0 }}
-                      animate={{ width: `${pct}%` }}
-                      transition={{ type: 'spring', stiffness: 220, damping: 26 }}
-                      className={`h-full ${LIKERT_SCORE_COLORS[sIdx]} flex items-center justify-center text-[10px] font-bold text-white overflow-hidden`}
-                      title={`Mức ${sIdx + 1} (${scaleLabels[sIdx]}): ${row.counts[sIdx]} phiếu (${pct}%)`}
-                    >
-                      {pct >= 9 ? `${pct}%` : ''}
-                    </motion.div>
-                  ) : null
-                )}
-              </div>
-
-              {/* Chi tiết số phiếu từng mức 1..5 */}
-              <div className="grid grid-cols-5 gap-1 text-[10px] text-slate-500 pt-0.5">
-                {[0, 1, 2, 3, 4].map((sIdx) => (
-                  <div key={sIdx} className="truncate">
-                    <span className={`font-bold ${LIKERT_TEXT_COLORS[sIdx]}`}>
-                      Mức {sIdx + 1}:
-                    </span>{' '}
-                    {row.counts[sIdx]} ({row.pcts[sIdx]}%)
-                  </div>
-                ))}
-              </div>
+        <div
+          className={
+            includeRadar && rows.length >= 3
+              ? 'grid grid-cols-1 lg:grid-cols-12 gap-5 items-center'
+              : ''
+          }
+        >
+          {includeRadar && rows.length >= 3 && (
+            <div className="lg:col-span-4 bg-slate-50/70 rounded-2xl p-4 border border-slate-200/80 flex items-center justify-center">
+              <ServqualRadarChart rows={rows} />
             </div>
-          ))}
+          )}
+
+          <div className={includeRadar && rows.length >= 3 ? 'lg:col-span-8 space-y-3' : 'space-y-3'}>
+            {sortedRows.map((row) => (
+              <div
+                key={row.code}
+                className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-2"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-slate-900 leading-snug max-w-2xl">
+                    <span className="inline-block px-1.5 py-0.5 rounded bg-slate-900 text-white font-mono text-[10px] font-bold mr-2">
+                      {row.displayCode}
+                    </span>
+                    {row.label}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                      Mức 4+5: {row.top2Pct}%
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-black tabular-nums">
+                      TB: {row.mean.toFixed(2)} / 5.0
+                    </span>
+                  </div>
+                </div>
+
+                {/* 100% Stacked Animated Bar */}
+                <div className="h-5 w-full bg-slate-200 rounded-lg overflow-hidden flex">
+                  {row.pcts.map((pct, sIdx) =>
+                    pct > 0 ? (
+                      <motion.div
+                        key={sIdx}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${pct}%` }}
+                        transition={{ type: 'spring', stiffness: 220, damping: 26 }}
+                        className={`h-full ${LIKERT_SCORE_COLORS[sIdx]} flex items-center justify-center text-[10px] font-bold text-white overflow-hidden`}
+                        title={`Mức ${sIdx + 1} (${scaleLabels[sIdx]}): ${row.counts[sIdx]} phiếu (${pct}%)`}
+                      >
+                        {pct >= 9 ? `${pct}%` : ''}
+                      </motion.div>
+                    ) : null
+                  )}
+                </div>
+
+                {/* Chi tiết số phiếu từng mức 1..5 */}
+                <div className="grid grid-cols-5 gap-1 text-[10px] text-slate-500 pt-0.5">
+                  {[0, 1, 2, 3, 4].map((sIdx) => (
+                    <div key={sIdx} className="truncate">
+                      <span className={`font-bold ${LIKERT_TEXT_COLORS[sIdx]}`}>
+                        Mức {sIdx + 1}:
+                      </span>{' '}
+                      {row.counts[sIdx]} ({row.pcts[sIdx]}%)
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -795,22 +1095,50 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
             </div>
             <div>
               <h2 className="text-xs sm:text-sm font-bold text-slate-900">
-                Bộ Lọc Đa Chiều &amp; Điều Khiển Dashboard Thời Gian Thực
+                Phân Hệ Báo Cáo Đa Chiều &amp; Bộ Lọc Tương Tác Thời Gian Thực
               </h2>
               <p className="text-[11px] text-slate-500">
-                Chọn bộ lọc hoặc bấm trực tiếp vào các thanh biểu đồ để lọc chéo (Cross-filter)
+                Chọn bộ lọc bên dưới hoặc bấm trực tiếp vào biểu đồ (Donut, Cột, Thanh) để lọc chéo
+                dữ liệu
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
+            {/* Nút chọn nhanh khoảng ngày */}
+            <div className="inline-flex items-center rounded-xl bg-slate-100 p-0.5 text-[11px] font-semibold">
+              <button
+                type="button"
+                onClick={() => applyQuickDatePreset('all')}
+                className={`px-2 py-1 rounded-lg cursor-pointer transition ${
+                  !dateFrom && !dateTo ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+                }`}
+              >
+                Tất cả ngày
+              </button>
+              <button
+                type="button"
+                onClick={() => applyQuickDatePreset('today')}
+                className="px-2 py-1 rounded-lg text-slate-600 hover:text-slate-900 cursor-pointer transition"
+              >
+                Hôm nay
+              </button>
+              <button
+                type="button"
+                onClick={() => applyQuickDatePreset('7days')}
+                className="px-2 py-1 rounded-lg text-slate-600 hover:text-slate-900 cursor-pointer transition"
+              >
+                7 ngày
+              </button>
+            </div>
+
             {isSuperadmin && onSeedPilotSamples && (
               <button
                 type="button"
                 onClick={onSeedPilotSamples}
                 className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold cursor-pointer transition"
               >
-                + Tạo mẫu thử
+                + Tạo mẫu thử (30 phiếu)
               </button>
             )}
             {isSuperadmin &&
@@ -828,7 +1156,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
               <button
                 type="button"
                 onClick={resetAllFilters}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition"
+                className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold inline-flex items-center gap-1 cursor-pointer transition"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 Đặt lại bộ lọc ({activeFilterChips.length})
@@ -844,7 +1172,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer transition"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5" />
-                  Tải Excel theo Bộ lọc ({filteredResponses.length})
+                  Tải Excel Có Cấu Trúc ({filteredResponses.length})
                 </button>
                 <button
                   type="button"
@@ -916,8 +1244,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
               className="w-full px-2 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800"
             >
               <option value="all">Tất cả thị trường</option>
-              <option value="domestic">🇻🇳 Khách Nội địa (S5=1..4)</option>
-              <option value="international">🌏 Khách Quốc tế (S5≥5)</option>
+              <option value="domestic">Khách Nội địa (S5=1..4)</option>
+              <option value="international">Khách Quốc tế (S5≥5)</option>
               <optgroup label="Chi tiết từng Quốc tịch / Vùng">
                 {qOpts('S5', S5_OPTIONS).map((o) => (
                   <option key={o.code} value={`code:${o.code}`}>
@@ -1014,7 +1342,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
               className="flex flex-wrap items-center gap-1.5 pt-1"
             >
               <span className="text-[11px] font-semibold text-slate-500 mr-1">
-                Đang lọc theo:
+                Đang lọc ({validResponses.length} phiếu hợp lệ):
               </span>
               {activeFilterChips.map((chip) => (
                 <motion.span
@@ -1204,18 +1532,28 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
          ========================================================================== */}
       <div className="bg-white rounded-2xl p-1.5 border border-slate-200 flex flex-wrap items-center gap-1">
         {[
-          { id: 'all', label: 'Toàn cảnh Báo cáo (Tất cả Biểu đồ)', icon: Layers },
-          { id: 'overview', label: '1. Quota & Nhân khẩu học (Phần S)', icon: MapPin },
+          { id: 'all', label: 'Toàn cảnh Báo cáo (All-in-One)', icon: Layers },
+          { id: 'overview', label: '1. Quota, PVV & Nhân khẩu học (Phần S)', icon: MapPin },
           { id: 'spending', label: '2. Chi tiêu, Ma trận A5 & Rào cản (Phần A)', icon: BarChart3 },
           {
             id: 'preferences',
-            label: '3. Khẩu vị, Giá (B4) & Likert SERVQUAL (B5)',
+            label: '3. Khẩu vị, Giá (B4) & Radar SERVQUAL (B5)',
             icon: PieChart,
           },
           {
             id: 'expectations',
-            label: '4. Kỳ vọng, Đề xuất (Phần C) & Câu hỏi Mở rộng',
+            label: '4. Kỳ vọng & Đề xuất (Phần C)',
             icon: Sparkles,
+          },
+          {
+            id: 'crosstab',
+            label: '5. Ma trận Phân tích Chéo (Cross-tab)',
+            icon: Table2,
+          },
+          {
+            id: 'explorer',
+            label: `6. Khám phá 100% Câu hỏi (${allConfiguredQuestions.length})`,
+            icon: Compass,
           },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -1245,29 +1583,10 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
             Không có phiếu khảo sát nào khớp với điều kiện lọc hiện tại
           </div>
           <p className="text-xs text-slate-500">
-            Hãy nới lỏng hoặc đặt lại bộ lọc để xem các biểu đồ phân tích.
+            Hãy nới lỏng bộ lọc hoặc nhấn nút tạo dữ liệu mẫu Pilot để kiểm thử trực quan hóa biểu
+            đồ.
           </p>
           <div className="flex flex-wrap items-center gap-2 justify-center pt-1">
-            {isSuperadmin && onSeedPilotSamples && (
-              <button
-                type="button"
-                onClick={onSeedPilotSamples}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold cursor-pointer transition"
-              >
-                + Tạo mẫu thử
-              </button>
-            )}
-            {isSuperadmin &&
-              onClearPilotSamples &&
-              responses.some((r) => r.id.startsWith('PILOT_SAMPLE_')) && (
-                <button
-                  type="button"
-                  onClick={onClearPilotSamples}
-                  className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-semibold cursor-pointer transition"
-                >
-                  Xóa mẫu thử
-                </button>
-              )}
             {activeFilterChips.length > 0 && (
               <button
                 type="button"
@@ -1283,7 +1602,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                 onClick={onSeedPilotSamples}
                 className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer"
               >
-                + Tạo dữ liệu mẫu Pilot để trải nghiệm Dashboard &amp; Filter
+                + Tạo 30 phiếu mẫu Pilot để trải nghiệm Dashboard &amp; Filter
               </button>
             )}
           </div>
@@ -1291,7 +1610,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
       ) : (
         <div className="space-y-5">
           {/* ======================================================================
-              SECTION 1: QUOTA PROGRESS & DEMOGRAPHICS (PHẦN S)
+              SECTION 1: QUOTA PROGRESS, DONUT SEGMENTATION & DEMOGRAPHICS (PHẦN S)
              ====================================================================== */}
           {(activeSubTab === 'all' || activeSubTab === 'overview') && (
             <motion.div
@@ -1299,16 +1618,119 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
               animate={{ opacity: 1, y: 0 }}
               className="space-y-4"
             >
+              {/* 3 Biểu đồ Donut Tổng quan Cơ cấu Mẫu (Click-to-Filter) */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-slate-900 uppercase">
+                      Cơ cấu Thị trường: Nội địa vs Quốc tế (S5)
+                    </h3>
+                    <span className="text-[11px] text-slate-400">Click để lọc</span>
+                  </div>
+                  <InteractiveDonutChart
+                    centerValue={`${validResponses.length}`}
+                    centerLabel="Phiếu hợp lệ"
+                    slices={[
+                      {
+                        id: 'dom',
+                        label: 'Khách Nội địa (S5=1..4)',
+                        count: validResponses.length - kpiMetrics.intlCount,
+                        pct: 100 - kpiMetrics.intlPct,
+                        color: '#d12f2f',
+                        isSelected: marketFilter === 'domestic',
+                        onClick: () =>
+                          setMarketFilter((p) => (p === 'domestic' ? 'all' : 'domestic')),
+                      },
+                      {
+                        id: 'intl',
+                        label: 'Khách Quốc tế (S5≥5)',
+                        count: kpiMetrics.intlCount,
+                        pct: kpiMetrics.intlPct,
+                        color: '#4f46e5',
+                        isSelected: marketFilter === 'international',
+                        onClick: () =>
+                          setMarketFilter((p) =>
+                            p === 'international' ? 'all' : 'international'
+                          ),
+                      },
+                    ]}
+                  />
+                </div>
+
+                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-slate-900 uppercase">
+                      Hình thức Chuyến đi: Tự túc vs Tour (S7)
+                    </h3>
+                    <span className="text-[11px] text-slate-400">Click để lọc</span>
+                  </div>
+                  <InteractiveDonutChart
+                    centerValue={`${kpiMetrics.fitPct}%`}
+                    centerLabel="Tự túc (FIT)"
+                    slices={computeSingleDistribution(validResponses, 'S7', S7_OPTIONS).map(
+                      (d, idx) => ({
+                        id: `s7_${d.code}`,
+                        label: d.label,
+                        count: d.count,
+                        pct: d.pct,
+                        color: idx === 0 ? '#059669' : '#d97706',
+                        isSelected: travelModeFilter === d.code,
+                        onClick: () =>
+                          setTravelModeFilter((p) => (p === d.code ? 'all' : d.code)),
+                      })
+                    )}
+                  />
+                </div>
+
+                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-slate-900 uppercase">
+                      Hành vi Sử dụng F&amp;B Hôm nay (A2)
+                    </h3>
+                    <span className="text-[11px] text-slate-400">Click để lọc</span>
+                  </div>
+                  <InteractiveDonutChart
+                    centerValue={`${kpiMetrics.fnbPenetrationRate}%`}
+                    centerLabel="Đã dùng F&B"
+                    slices={[
+                      {
+                        id: 'used',
+                        label: 'Đã sử dụng F&B (A2=1..6)',
+                        count: kpiMetrics.usedFnBCount,
+                        pct: kpiMetrics.fnbPenetrationRate,
+                        color: '#0284c7',
+                        isSelected: fnbUsageFilter === 'used',
+                        onClick: () =>
+                          setFnbUsageFilter((p) => (p === 'used' ? 'all' : 'used')),
+                      },
+                      {
+                        id: 'not_used',
+                        label: 'Chưa sử dụng F&B (A2=7)',
+                        count: kpiMetrics.notUsedFnBCount,
+                        pct:
+                          validResponses.length > 0
+                            ? 100 - kpiMetrics.fnbPenetrationRate
+                            : 0,
+                        color: '#e11d48',
+                        isSelected: fnbUsageFilter === 'not_used',
+                        onClick: () =>
+                          setFnbUsageFilter((p) => (p === 'not_used' ? 'all' : 'not_used')),
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Tiến độ theo Điểm khảo sát */}
+                {/* Tiến độ Quota theo Điểm khảo sát × Nội địa / Quốc tế */}
                 <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-sm font-bold text-slate-900">
-                        Tiến độ Mẫu theo Điểm Khảo Sát (Click để lọc)
+                        Tiến độ Quota theo Điểm Khảo Sát &amp; Phân Khúc (Click để lọc)
                       </h3>
                       <p className="text-xs text-slate-500">
-                        So sánh số phiếu hợp lệ thực tế so với chỉ tiêu Quota từng vị trí
+                        Theo dõi tiến độ thực tế tại 5 vị trí trực so với chỉ tiêu Quota
                       </p>
                     </div>
                     <MapPin className="w-4 h-4 text-[#d12f2f]" />
@@ -1316,9 +1738,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
                   <div className="space-y-2.5">
                     {config.locations.map((loc) => {
-                      const locCount = validResponses.filter(
-                        (r) => r.locationId === loc.id
-                      ).length;
+                      const locResponses = validResponses.filter((r) => r.locationId === loc.id);
+                      const locCount = locResponses.length;
+                      const locDom = locResponses.filter((r) => {
+                        const s5 = getSingleAnswer(r, 'S5');
+                        return s5 !== null && s5 >= 1 && s5 <= 4;
+                      }).length;
+                      const locIntl = locCount - locDom;
                       const locScr = baseContextResponses.filter(
                         (r) => r.locationId === loc.id && r.status === 'screenout'
                       ).length;
@@ -1339,16 +1765,18 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                               : 'bg-slate-50/70 border-slate-200/80 hover:bg-slate-100/70'
                           }`}
                         >
-                          <div className="flex items-center justify-between text-xs mb-1.5">
+                          <div className="flex flex-wrap items-center justify-between gap-1 text-xs mb-1.5">
                             <span className="font-bold text-slate-800">{loc.name}</span>
-                            <span className="font-bold text-slate-900 tabular-nums">
-                              {locCount}/{loc.quotaTarget} phiếu ({pct}%)
-                              {locScr > 0 && (
-                                <span className="text-[11px] text-rose-500 font-normal ml-1.5">
-                                  • {locScr} screen-out
-                                </span>
-                              )}
-                            </span>
+                            <div className="flex items-center gap-2 tabular-nums">
+                              <span className="text-[11px] text-slate-500">
+                                Nội địa: <strong>{locDom}</strong> • Quốc tế:{' '}
+                                <strong>{locIntl}</strong>
+                                {locScr > 0 ? ` • Screen-out: ${locScr}` : ''}
+                              </span>
+                              <span className="font-bold text-slate-900">
+                                {locCount}/{loc.quotaTarget} ({pct}%)
+                              </span>
+                            </div>
                           </div>
                           <div className="h-2.5 bg-slate-200 rounded-full overflow-hidden">
                             <motion.div
@@ -1369,12 +1797,10 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-sm font-bold text-slate-900">
-                        S5. Cơ cấu Thị trường &amp; Quốc tịch Khách (Click để lọc)
+                        S5. Chi tiết Vùng miền &amp; Quốc tịch Khách (Click để lọc)
                       </h3>
                       <p className="text-xs text-slate-500">
-                        Nội địa: {validResponses.length - kpiMetrics.intlCount} phiếu (
-                        {100 - kpiMetrics.intlPct}%) • Quốc tế: {kpiMetrics.intlCount} phiếu (
-                        {kpiMetrics.intlPct}%)
+                        Bấm vào từng dòng quốc tịch/vùng miền để lọc toàn bộ biểu đồ bên dưới
                       </p>
                     </div>
                     <Users className="w-4 h-4 text-indigo-600" />
@@ -1394,7 +1820,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                 </div>
               </div>
 
-              {/* Hàng 2 Phần S: S4 Độ tuổi, S6 Đi cùng ai, S7 Hình thức đi & S9 Loại vé */}
+              {/* Hàng 2 Phần S: S3/S4, S6, S9/S8 & Bảng năng suất PVV */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
                   <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
@@ -1414,7 +1840,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
                 <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
                   <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                    S6. Nhóm đi cùng &amp; S7. Hình thức chuyến đi
+                    S6. Nhóm đi cùng &amp; S8. Số lần đến Bà Nà
                   </h3>
                   {renderAnimatedHorizontalBars(
                     computeSingleDistribution(validResponses, 'S6', S6_OPTIONS),
@@ -1422,22 +1848,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   )}
                   <div className="border-t border-slate-100 pt-2">
                     {renderAnimatedHorizontalBars(
-                      computeSingleDistribution(validResponses, 'S7', S7_OPTIONS).map((d) => ({
-                        ...d,
-                        isSelected: travelModeFilter === d.code,
-                        onClick: () =>
-                          setTravelModeFilter((prev) =>
-                            prev === d.code ? 'all' : (d.code as number)
-                          ),
-                      })),
-                      'bg-amber-600'
+                      computeSingleDistribution(validResponses, 'S8', S8_OPTIONS),
+                      'bg-slate-700'
                     )}
                   </div>
                 </div>
 
                 <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
                   <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                    S9. Loại vé / Gói sản phẩm &amp; S8. Số lần đến
+                    S9. Loại vé / Gói sản phẩm (Click để lọc)
                   </h3>
                   {renderAnimatedHorizontalBars(
                     computeSingleDistribution(validResponses, 'S9', S9_OPTIONS).map((d) => ({
@@ -1450,14 +1869,74 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                     })),
                     'bg-emerald-600'
                   )}
-                  <div className="border-t border-slate-100 pt-2">
-                    {renderAnimatedHorizontalBars(
-                      computeSingleDistribution(validResponses, 'S8', S8_OPTIONS),
-                      'bg-slate-700'
-                    )}
-                  </div>
                 </div>
               </div>
+
+              {/* Bảng Xếp Hạng Năng Suất Phỏng Vấn Viên (PVV Leaderboard) */}
+              {interviewers.length > 0 && (
+                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Award className="w-4 h-4 text-amber-500" />
+                      <h3 className="text-sm font-bold text-slate-900">
+                        Thống Kê Năng Suất Phỏng Vấn Viên (Click vào PVV để lọc phiếu)
+                      </h3>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                    {interviewers.map((pvv) => {
+                      const pvvValid = validResponses.filter(
+                        (r) =>
+                          (r.interviewerEmail || r.interviewerName || r.interviewerUid) ===
+                          pvv.id
+                      );
+                      const pvvScr = baseContextResponses.filter(
+                        (r) =>
+                          (r.interviewerEmail || r.interviewerName || r.interviewerUid) ===
+                            pvv.id && r.status === 'screenout'
+                      );
+                      const avgDur =
+                        pvvValid.length > 0
+                          ? Math.round(
+                              pvvValid.reduce((acc, r) => acc + (r.durationSeconds || 0), 0) /
+                                pvvValid.length
+                            )
+                          : 0;
+                      const isSel = interviewerFilter === pvv.id;
+                      return (
+                        <div
+                          key={pvv.id}
+                          onClick={() =>
+                            setInterviewerFilter((prev) => (prev === pvv.id ? 'all' : pvv.id))
+                          }
+                          className={`p-3 rounded-xl border transition cursor-pointer ${
+                            isSel
+                              ? 'bg-red-50/60 border-[#d12f2f] ring-1 ring-[#d12f2f]'
+                              : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                          }`}
+                        >
+                          <div className="font-bold text-xs text-slate-900 truncate">
+                            {pvv.name}
+                          </div>
+                          <div className="flex items-baseline justify-between mt-1">
+                            <span className="text-lg font-black text-[#d12f2f] tabular-nums">
+                              {pvvValid.length} phiếu
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              TB: {Math.floor(avgDur / 60)}p{String(avgDur % 60).padStart(2, '0')}s
+                            </span>
+                          </div>
+                          {pvvScr.length > 0 && (
+                            <div className="text-[10px] text-rose-500 mt-0.5">
+                              Screen-out: {pvvScr.length} phiếu
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -1470,16 +1949,16 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
               animate={{ opacity: 1, y: 0 }}
               className="space-y-4"
             >
-              {/* Biểu đồ Kép So sánh Ngân sách Dự kiến (A1) vs Chi tiêu Thực tế (A4) */}
+              {/* Biểu đồ Cột Đứng Kép (Grouped Vertical Column Chart) + Thanh Ngang: A1 vs A4 */}
               <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">
-                      So Sánh Đối Chiếu: Ngân Sách Dự Kiến (A1) vs Chi Tiêu Thực Tế (A4)
+                      Biểu Đồ Cột Đối Chiếu: Ngân Sách Dự Kiến (A1) vs Chi Tiêu Thực Tế (A4)
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Đánh giá sự dịch chuyển giữa mức dự trù trước khi ăn và số tiền thực chi trên
-                      1 người
+                      So sánh trực quan phân bổ mức dự kiến chi (A1) và thực chi (A4) trên 8 bậc
+                      ngân sách
                     </p>
                   </div>
                   <div className="flex items-center gap-3 text-xs font-semibold">
@@ -1494,59 +1973,76 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   </div>
                 </div>
 
-                <div className="space-y-3">
-                  {qOpts('A1', A1_OPTIONS).map((tier) => {
-                    const a1Dist = computeSingleDistribution(validResponses, 'A1', A1_OPTIONS);
-                    const a4Dist = computeSingleDistribution(
-                      validResponses.filter((r) => !getMultiAnswer(r, 'A2').includes(7)),
-                      'A4',
-                      A4_OPTIONS
-                    );
-                    const a1Item = a1Dist.find((x) => x.code === tier.code);
-                    const a4Item = a4Dist.find((x) => x.code === tier.code);
-                    const a1Pct = a1Item?.pct || 0;
-                    const a4Pct = a4Item?.pct || 0;
+                {/* Vertical Grouped Columns */}
+                {(() => {
+                  const a1Dist = computeSingleDistribution(validResponses, 'A1', A1_OPTIONS);
+                  const a4Dist = computeSingleDistribution(
+                    validResponses.filter((r) => !getMultiAnswer(r, 'A2').includes(7)),
+                    'A4',
+                    A4_OPTIONS
+                  );
+                  const maxColPct = Math.max(
+                    ...a1Dist.map((d) => d.pct),
+                    ...a4Dist.map((d) => d.pct),
+                    10
+                  );
 
-                    return (
-                      <div
-                        key={tier.code}
-                        className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 space-y-1.5"
-                      >
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-slate-800">
-                            {tier.code}. {tier.label}
-                          </span>
-                          <div className="flex items-center gap-3 tabular-nums">
-                            <span className="text-sky-700 font-semibold">
-                              Dự kiến (A1): {a1Item?.count || 0} ({a1Pct}%)
-                            </span>
-                            <span className="text-emerald-700 font-bold">
-                              Thực tế (A4): {a4Item?.count || 0} ({a4Pct}%)
-                            </span>
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5 pt-2">
+                      {qOpts('A1', A1_OPTIONS).map((tier) => {
+                        const a1Item = a1Dist.find((x) => x.code === tier.code);
+                        const a4Item = a4Dist.find((x) => x.code === tier.code);
+                        const a1Pct = a1Item?.pct || 0;
+                        const a4Pct = a4Item?.pct || 0;
+                        const h1 = a1Pct > 0 ? Math.max((a1Pct / maxColPct) * 100, 6) : 0;
+                        const h4 = a4Pct > 0 ? Math.max((a4Pct / maxColPct) * 100, 6) : 0;
+
+                        return (
+                          <div
+                            key={tier.code}
+                            className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col justify-between"
+                          >
+                            <div className="h-32 flex items-end justify-center gap-2.5 pt-4 border-b border-slate-200 px-2">
+                              <div className="flex flex-col items-center justify-end h-full flex-1">
+                                <span className="text-[10px] font-bold text-sky-700 mb-1 tabular-nums">
+                                  {a1Pct}%
+                                </span>
+                                <motion.div
+                                  initial={{ height: 0 }}
+                                  animate={{ height: `${h1}%` }}
+                                  transition={{ type: 'spring', stiffness: 220, damping: 24 }}
+                                  className="w-full max-w-[24px] bg-sky-500 rounded-t-md"
+                                  title={`A1 (${tier.label}): ${a1Item?.count || 0} phiếu (${a1Pct}%)`}
+                                />
+                              </div>
+
+                              <div className="flex flex-col items-center justify-end h-full flex-1">
+                                <span className="text-[10px] font-bold text-emerald-700 mb-1 tabular-nums">
+                                  {a4Pct}%
+                                </span>
+                                <motion.div
+                                  initial={{ height: 0 }}
+                                  animate={{ height: `${h4}%` }}
+                                  transition={{ type: 'spring', stiffness: 220, damping: 24 }}
+                                  className="w-full max-w-[24px] bg-emerald-600 rounded-t-md"
+                                  title={`A4 (${tier.label}): ${a4Item?.count || 0} phiếu (${a4Pct}%)`}
+                                />
+                              </div>
+                            </div>
+                            <div className="pt-2 text-center">
+                              <div className="text-[11px] font-bold text-slate-800 leading-tight line-clamp-2">
+                                {tier.code}. {tier.label}
+                              </div>
+                              <div className="text-[10px] text-slate-400 mt-0.5 tabular-nums">
+                                A1: {a1Item?.count || 0} • A4: {a4Item?.count || 0}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                            <motion.div
-                              initial={{ width: 0 }}
-                              animate={{ width: `${a1Pct}%` }}
-                              transition={{ type: 'spring', stiffness: 230, damping: 26 }}
-                              className="h-full bg-sky-500 rounded-full"
-                            />
-                          </div>
-                          <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                            <motion.div
-                              initial={{ width: 0 }}
-                              animate={{ width: `${a4Pct}%` }}
-                              transition={{ type: 'spring', stiffness: 230, damping: 26 }}
-                              className="h-full bg-emerald-600 rounded-full"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* A2: Tỷ lệ sử dụng từng loại hình & Ma trận A5: Mức chi theo từng loại hình */}
@@ -1722,12 +2218,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
               animate={{ opacity: 1, y: 0 }}
               className="space-y-4"
             >
-              {/* Biểu đồ Ma trận Likert 5 mức B5 (SERVQUAL) */}
+              {/* Biểu đồ Ma trận Likert 5 mức B5 (SERVQUAL) kết hợp Biểu đồ Radar */}
               {renderLikertMatrixChart(
                 'B5',
                 config.questions.B5?.title ||
                   'B5. Đánh giá mức độ quan trọng của các yếu tố khi quyết định sử dụng F&B (Khung SERVQUAL)',
-                'Xếp hạng tự động từ yếu tố có Điểm Trung Bình (Mean Score) cao nhất xuống thấp nhất'
+                'Kết hợp Biểu đồ Radar 6 chiều SERVQUAL & Biểu đồ Stacked 100% xếp hạng theo Điểm Trung Bình (Mean Score)',
+                true
               )}
 
               {/* Ma trận B4: Cảm nhận mức giá hiện tại (1: Đắt, 2: Hợp lý, 3: Rẻ) & Sở thích B1/B2 */}
@@ -1874,7 +2371,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           )}
 
           {/* ======================================================================
-              SECTION 4: EXPECTATIONS, SUGGESTIONS (PHẦN C) & CUSTOM QUESTIONS
+              SECTION 4: EXPECTATIONS, SUGGESTIONS (PHẦN C) & VERBATIMS
              ====================================================================== */}
           {(activeSubTab === 'all' || activeSubTab === 'expectations') && (
             <motion.div
@@ -1925,81 +2422,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                 </div>
               </div>
 
-              {/* Tự động hiển thị biểu đồ cho tất cả các câu hỏi mở rộng / bảng Likert mới do Admin tạo */}
-              {customQuestionsList.length > 0 && (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 px-1">
-                    <Sparkles className="w-4 h-4 text-[#d12f2f]" />
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Báo Cáo Các Câu Hỏi Mở Rộng &amp; Bảng Likert Tùy Chỉnh ({customQuestionsList.length} câu)
-                    </h3>
-                  </div>
-                  {customQuestionsList.map((cq) => {
-                    if (cq.type === 'likert') {
-                      return (
-                        <div key={cq.key}>
-                          {renderLikertMatrixChart(
-                            cq.key,
-                            cq.title,
-                            `Thuộc ${cq.section} • Bảng câu hỏi Likert 5 mức độ nhiều dòng`
-                          )}
-                        </div>
-                      );
-                    }
-                    if (cq.type === 'single' || cq.type === 'multi') {
-                      const dist =
-                        cq.type === 'single'
-                          ? computeSingleDistribution(validResponses, cq.key, cq.options)
-                          : computeMultiDistribution(validResponses, cq.key, cq.options);
-                      return (
-                        <div
-                          key={cq.key}
-                          className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded bg-slate-100 font-mono text-xs font-bold text-slate-700">
-                              {cq.key}
-                            </span>
-                            <h4 className="text-sm font-bold text-slate-900">{cq.title}</h4>
-                          </div>
-                          {renderAnimatedHorizontalBars(dist, 'bg-[#d12f2f]')}
-                        </div>
-                      );
-                    }
-                    // Câu hỏi tự luận tùy chỉnh
-                    const texts = validResponses
-                      .map((r) => ({
-                        code: r.surveyCode,
-                        txt: getTextAnswer(r, cq.key).trim(),
-                      }))
-                      .filter((x) => Boolean(x.txt));
-                    return (
-                      <div
-                        key={cq.key}
-                        className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-2.5"
-                      >
-                        <h4 className="text-sm font-bold text-slate-900">
-                          {cq.key} — {cq.title} ({texts.length} phản hồi tự luận)
-                        </h4>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto">
-                          {texts.map((item, idx) => (
-                            <div
-                              key={idx}
-                              className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs"
-                            >
-                              <span className="font-mono font-bold text-[#d12f2f] mr-1.5">
-                                [{item.code}]
-                              </span>
-                              <span className="text-slate-800">{item.txt}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
               {/* Tổng hợp Ý kiến đóng góp mở (C4_note, A3.1..A3.3, và "Khác - ghi rõ") */}
               {openVerbatims.length > 0 && (
                 <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
@@ -2031,6 +2453,266 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   </div>
                 </div>
               )}
+            </motion.div>
+          )}
+
+          {/* ======================================================================
+              SECTION 5: CROSS-TABULATION & MULTI-SEGMENT COMPARISON MATRIX
+             ====================================================================== */}
+          {(activeSubTab === 'all' || activeSubTab === 'crosstab') && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Table2 className="w-4 h-4 text-[#d12f2f]" />
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Ma Trận Phân Tích Chéo Đa Chiều (Cross-Tabulation Benchmark)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      So sánh trực tiếp các chỉ số cốt lõi giữa Nội địa vs Quốc tế, FIT vs Tour, và
+                      5 Điểm khảo sát
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-900 text-white font-bold">
+                      <th className="py-2.5 px-3 rounded-tl-xl">Phân khúc / Nhóm đối sánh</th>
+                      <th className="py-2.5 px-3 text-right">Cỡ mẫu (N)</th>
+                      <th className="py-2.5 px-3 text-right">% Dùng F&amp;B (A2)</th>
+                      <th className="py-2.5 px-3 text-right">Dự kiến TB (A1)</th>
+                      <th className="py-2.5 px-3 text-right">Thực chi TB (A4)</th>
+                      <th className="py-2.5 px-3 text-right">Thấy Buffet Đắt (B4)</th>
+                      <th className="py-2.5 px-3 text-right rounded-tr-xl">Điểm SERVQUAL (B5)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {[
+                      {
+                        group: 'Toàn bộ mẫu đang lọc',
+                        subset: validResponses,
+                        highlight: true,
+                      },
+                      {
+                        group: 'Khách Nội địa (S5 = 1..4)',
+                        subset: validResponses.filter((r) => {
+                          const s5 = getSingleAnswer(r, 'S5');
+                          return s5 !== null && s5 >= 1 && s5 <= 4;
+                        }),
+                      },
+                      {
+                        group: 'Khách Quốc tế (S5 ≥ 5)',
+                        subset: validResponses.filter((r) => {
+                          const s5 = getSingleAnswer(r, 'S5');
+                          return s5 !== null && s5 >= 5;
+                        }),
+                      },
+                      {
+                        group: 'Đi tự túc - FIT (S7 = 1)',
+                        subset: validResponses.filter((r) => getSingleAnswer(r, 'S7') === 1),
+                      },
+                      {
+                        group: 'Đi theo Tour trọn gói (S7 = 2)',
+                        subset: validResponses.filter((r) => getSingleAnswer(r, 'S7') === 2),
+                      },
+                      ...config.locations.map((loc) => ({
+                        group: `Vị trí: ${loc.name}`,
+                        subset: validResponses.filter((r) => r.locationId === loc.id),
+                      })),
+                    ].map((row, idx) => {
+                      const m = computeSubsetMetrics(row.subset);
+                      return (
+                        <tr
+                          key={idx}
+                          className={
+                            row.highlight
+                              ? 'bg-red-50/70 font-bold text-slate-900'
+                              : 'hover:bg-slate-50 text-slate-700'
+                          }
+                        >
+                          <td className="py-2.5 px-3 font-semibold">{row.group}</td>
+                          <td className="py-2.5 px-3 text-right tabular-nums font-bold">
+                            {m.count}
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums">
+                            <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold">
+                              {m.fnbPct}%
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums">
+                            {m.avgA1 > 0 ? `${m.avgA1.toLocaleString('vi-VN')}đ` : '—'}
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums font-bold text-emerald-700">
+                            {m.avgA4 > 0 ? `${m.avgA4.toLocaleString('vi-VN')}đ` : '—'}
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums">
+                            <span className="text-rose-600 font-semibold">
+                              {m.buffetExpensivePct}%
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums font-black text-amber-700">
+                            {m.b5Mean > 0 ? `${m.b5Mean.toFixed(2)} / 5.0` : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ======================================================================
+              SECTION 6: FULL QUESTION-BY-QUESTION DYNAMIC EXPLORER (100% QUESTIONS)
+             ====================================================================== */}
+          {(activeSubTab === 'all' || activeSubTab === 'explorer') && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-4"
+            >
+              <div className="bg-white rounded-2xl p-4 border border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Compass className="w-4 h-4 text-[#d12f2f]" />
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Trình Khám Phá Tự Động 100% Câu Hỏi Trong Cấu Hình ({allConfiguredQuestions.length} câu)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Hiển thị biểu đồ chi tiết cho mọi câu hỏi gốc, câu hỏi con và câu hỏi mới do
+                      Admin thêm vào
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  {['ALL', 'PHẦN S', 'PHẦN A', 'PHẦN B', 'PHẦN C'].map((sec) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      onClick={() => setExplorerSectionFilter(sec)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition ${
+                        explorerSectionFilter === sec
+                          ? 'bg-[#d12f2f] text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {sec === 'ALL' ? 'Tất cả Phần' : sec}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {allConfiguredQuestions
+                  .filter(
+                    (q) =>
+                      explorerSectionFilter === 'ALL' || q.section === explorerSectionFilter
+                  )
+                  .map((q) => {
+                    if (q.type === 'likert') {
+                      return (
+                        <div key={q.key} className="lg:col-span-2">
+                          {renderLikertMatrixChart(
+                            q.key,
+                            q.title,
+                            `Thuộc ${q.section} • Bảng đánh giá Likert 5 mức độ`
+                          )}
+                        </div>
+                      );
+                    }
+
+                    if (q.type === 'single' || q.type === 'multi') {
+                      const dist =
+                        q.type === 'single'
+                          ? computeSingleDistribution(validResponses, q.key, q.options)
+                          : computeMultiDistribution(validResponses, q.key, q.options);
+                      const answeredCount = dist[0]?.totalAnswered ?? 0;
+
+                      return (
+                        <div
+                          key={q.key}
+                          className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <span className="inline-block px-2 py-0.5 rounded bg-slate-100 font-mono text-[11px] font-bold text-slate-700 mr-1.5">
+                                {q.key} • {q.section}
+                              </span>
+                              <span className="text-xs font-bold text-slate-900">{q.title}</span>
+                            </div>
+                            <span className="text-[11px] font-semibold text-slate-400 shrink-0">
+                              N = {answeredCount}
+                            </span>
+                          </div>
+                          {renderAnimatedHorizontalBars(
+                            dist,
+                            q.section === 'PHẦN S'
+                              ? 'bg-indigo-600'
+                              : q.section === 'PHẦN A'
+                              ? 'bg-[#d12f2f]'
+                              : q.section === 'PHẦN B'
+                              ? 'bg-emerald-600'
+                              : 'bg-purple-600'
+                          )}
+                        </div>
+                      );
+                    }
+
+                    // Câu hỏi tự luận (text)
+                    const texts = validResponses
+                      .map((r) => ({
+                        code: r.surveyCode,
+                        txt: getTextAnswer(r, q.key).trim(),
+                      }))
+                      .filter((x) => Boolean(x.txt));
+
+                    return (
+                      <div
+                        key={q.key}
+                        className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-2.5"
+                      >
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold text-slate-900">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 font-mono mr-1.5">
+                              {q.key}
+                            </span>
+                            {q.title}
+                          </h4>
+                          <span className="text-[11px] font-semibold text-slate-400">
+                            {texts.length} câu trả lời
+                          </span>
+                        </div>
+                        {texts.length === 0 ? (
+                          <div className="text-xs text-slate-400 italic py-2">
+                            Chưa có câu trả lời tự luận cho câu hỏi này.
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                            {texts.map((item, idx) => (
+                              <div
+                                key={idx}
+                                className="p-2 rounded-xl bg-slate-50 border border-slate-200 text-xs"
+                              >
+                                <span className="font-mono font-bold text-[#d12f2f] mr-1.5">
+                                  [{item.code}]
+                                </span>
+                                <span className="text-slate-800">{item.txt}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
             </motion.div>
           )}
         </div>
